@@ -15,7 +15,7 @@ mod valuetypes;
 mod test;
 
 pub use stasher::Stasher;
-pub use unstasher::Unstasher;
+pub use unstasher::{UnstashError, Unstasher};
 pub use valuetypes::{PrimitiveType, ValueType};
 
 pub trait Stashable {
@@ -23,11 +23,11 @@ pub trait Stashable {
 }
 
 pub trait Unstashable: Sized {
-    fn unstash(unstasher: &mut Unstasher) -> Result<Self, ()>;
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError>;
 }
 
 pub trait UnstashableInplace {
-    fn unstash_inplace(&mut self, unstasher: &mut Unstasher) -> Result<(), ()>;
+    fn unstash_inplace(&mut self, unstasher: &mut Unstasher) -> Result<(), UnstashError>;
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -93,9 +93,9 @@ impl StashMap {
         hash
     }
 
-    fn unstash<'a, T: Unstashable>(&self, hash: TypeSaltedHash) -> Result<T, ()> {
+    fn unstash<'a, T: Unstashable>(&self, hash: TypeSaltedHash) -> Result<T, UnstashError> {
         let Some(stashed_object) = self.objects.get(&hash) else {
-            return Err(());
+            return Err(UnstashError::ObjectNotFound);
         };
 
         let mut stash_out = Unstasher::from_stashed_object(stashed_object, self);
@@ -103,8 +103,11 @@ impl StashMap {
         let object = T::unstash(&mut stash_out)?;
 
         if !stash_out.is_finished() {
-            return Err(());
+            return Err(UnstashError::UnfinishedObject);
         }
+
+        // TODO: check that hash matches original?
+        // avoid possibly checking TypeID hashes between program runs, e.g. if data was saved to disk
 
         Ok(object)
     }
@@ -113,9 +116,9 @@ impl StashMap {
         &self,
         hash: TypeSaltedHash,
         object: &mut T,
-    ) -> Result<(), ()> {
+    ) -> Result<(), UnstashError> {
         let Some(stashed_object) = self.objects.get(&hash) else {
-            return Err(());
+            return Err(UnstashError::ObjectNotFound);
         };
 
         let mut stash_out = Unstasher::from_stashed_object(stashed_object, self);
@@ -123,8 +126,11 @@ impl StashMap {
         object.unstash_inplace(&mut stash_out)?;
 
         if !stash_out.is_finished() {
-            return Err(());
+            return Err(UnstashError::UnfinishedObject);
         }
+
+        // TODO: check that hash matches original?
+        // avoid possibly checking TypeID hashes between program runs, e.g. if data was saved to disk
 
         Ok(())
     }
@@ -171,54 +177,26 @@ impl Stash {
         }
     }
 
+    pub fn num_objects(&self) -> usize {
+        self.map.borrow().objects.len()
+    }
+
     pub fn stash<T: 'static + Stashable>(&self, object: &T) -> StashHandle<T> {
         let mut stashmap = self.map.borrow_mut();
         let hash = stashmap.stash_and_add_reference(object);
         StashHandle::new(Rc::clone(&self.map), hash)
     }
 
-    pub fn unstash<T: Unstashable>(&self, handle: &StashHandle<T>) -> Result<T, ()> {
-        let map = self.map.borrow();
-        let Some(stashed_object) = map.objects.get(&handle.hash) else {
-            return Err(());
-        };
-
-        let mut unstasher = Unstasher::from_stashed_object(stashed_object, &map);
-
-        let object = T::unstash(&mut unstasher)?;
-
-        if !unstasher.is_finished() {
-            return Err(());
-        }
-
-        // TODO: check that hash matches original?
-        // avoid possibly checking TypeID hashes between program runs, e.g. if data was saved to disk
-
-        Ok(object)
+    pub fn unstash<T: Unstashable>(&self, handle: &StashHandle<T>) -> Result<T, UnstashError> {
+        self.map.borrow().unstash(handle.hash)
     }
 
     pub fn unstash_inplace<T: UnstashableInplace>(
         &self,
         handle: &StashHandle<T>,
         object: &mut T,
-    ) -> Result<(), ()> {
-        let map = self.map.borrow();
-        let Some(stashed_object) = map.objects.get(&handle.hash) else {
-            return Err(());
-        };
-
-        let mut unstasher = Unstasher::from_stashed_object(stashed_object, &map);
-
-        object.unstash_inplace(&mut unstasher)?;
-
-        if !unstasher.is_finished() {
-            return Err(());
-        }
-
-        // TODO: check that hash matches original?
-        // avoid possibly checking TypeID hashes between program runs, e.g. if data was saved to disk
-
-        Ok(())
+    ) -> Result<(), UnstashError> {
+        self.map.borrow().unstash_inplace(handle.hash, object)
     }
 }
 

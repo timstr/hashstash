@@ -25,13 +25,15 @@ impl<'a> StasherBackend<'a> {
         }
     }
 
-    fn stash_dependency<T: 'static + Stashable>(&mut self, object: &T) -> TypeSaltedHash {
+    fn stash_dependency<T: 'static + Stashable>(&mut self, object: &T) {
         match self {
-            StasherBackend::Hash(_) => TypeSaltedHash::hash_object(object),
+            StasherBackend::Hash(hasher) => {
+                let object_hash = TypeSaltedHash::hash_object(object);
+                hasher.hasher.write_u64(object_hash.0);
+            }
             StasherBackend::Serialize(serializer) => {
                 let hash = serializer.stashmap.stash_and_add_reference(object);
                 serializer.dependencies.push(hash);
-                hash
             }
         }
     }
@@ -86,6 +88,11 @@ impl<'a> Stasher<'a> {
 
 /// Public methods
 impl<'a> Stasher<'a> {
+    /// Write a single bool value
+    pub fn bool(&mut self, x: bool) {
+        self.write_primitive::<bool>(x);
+    }
+
     /// Write a single u8 value
     pub fn u8(&mut self, x: u8) {
         self.write_primitive::<u8>(x);
@@ -200,7 +207,6 @@ impl<'a> Stasher<'a> {
 
     pub fn stashable<T: 'static + Stashable>(&mut self, object: &T) {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        let hash = self.backend.stash_dependency(object);
-        hash.0.write_raw_bytes_to(self);
+        self.backend.stash_dependency(object);
     }
 }

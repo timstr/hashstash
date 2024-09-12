@@ -1,4 +1,4 @@
-use crate::{stasher::Stasher, unstasher::Unstasher};
+use crate::{stasher::Stasher, unstasher::Unstasher, UnstashError};
 
 /// Enum for the set of primitive fixed-size types that are supported
 #[derive(PartialEq, Eq, Debug)]
@@ -51,7 +51,7 @@ impl PrimitiveType {
     }
 
     /// Constructs a PrimitiveType from an integer value as returned by to_nibble()
-    fn from_nibble(byte: u8) -> Result<PrimitiveType, ()> {
+    fn from_nibble(byte: u8) -> Result<PrimitiveType, UnstashError> {
         match byte {
             0x01 => Ok(PrimitiveType::Bool),
             0x02 => Ok(PrimitiveType::U8),
@@ -64,7 +64,7 @@ impl PrimitiveType {
             0x09 => Ok(PrimitiveType::I64),
             0x0A => Ok(PrimitiveType::F32),
             0x0B => Ok(PrimitiveType::F64),
-            _ => Err(()),
+            _ => Err(UnstashError::Corrupted),
         }
     }
 }
@@ -81,7 +81,7 @@ impl ValueType {
     }
 
     /// Constructs a ValueType from an integer value as returned by to_byte()
-    pub(crate) fn from_byte(byte: u8) -> Result<ValueType, ()> {
+    pub(crate) fn from_byte(byte: u8) -> Result<ValueType, UnstashError> {
         let hi_nibble = byte & 0xF0;
         let lo_nibble = byte & 0x0F;
         match hi_nibble {
@@ -89,7 +89,7 @@ impl ValueType {
             0x10 => Ok(ValueType::Array(PrimitiveType::from_nibble(lo_nibble)?)),
             0x20 => Ok(ValueType::String),
             0x30 => Ok(ValueType::StashedObject),
-            _ => Err(()),
+            _ => Err(UnstashError::Corrupted),
         }
     }
 }
