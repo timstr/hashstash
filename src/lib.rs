@@ -93,9 +93,17 @@ impl StashMap {
         hash
     }
 
+    fn add_reference(&self, hash: TypeSaltedHash) {
+        let stashed_object = self.objects.get(&hash).unwrap();
+        stashed_object
+            .reference_count
+            .set(stashed_object.reference_count.get() + 1);
+    }
+
     fn unstash<'a, T: Unstashable>(&self, hash: TypeSaltedHash) -> Result<T, UnstashError> {
         let Some(stashed_object) = self.objects.get(&hash) else {
-            return Err(UnstashError::ObjectNotFound);
+            // Is this ever possible?
+            return Err(UnstashError::NotFound);
         };
 
         let mut stash_out = Unstasher::from_stashed_object(stashed_object, self);
@@ -103,11 +111,8 @@ impl StashMap {
         let object = T::unstash(&mut stash_out)?;
 
         if !stash_out.is_finished() {
-            return Err(UnstashError::UnfinishedObject);
+            return Err(UnstashError::NotFinished);
         }
-
-        // TODO: check that hash matches original?
-        // avoid possibly checking TypeID hashes between program runs, e.g. if data was saved to disk
 
         Ok(object)
     }
@@ -118,7 +123,8 @@ impl StashMap {
         object: &mut T,
     ) -> Result<(), UnstashError> {
         let Some(stashed_object) = self.objects.get(&hash) else {
-            return Err(UnstashError::ObjectNotFound);
+            // Is this ever possible?
+            return Err(UnstashError::NotFound);
         };
 
         let mut stash_out = Unstasher::from_stashed_object(stashed_object, self);
@@ -126,11 +132,8 @@ impl StashMap {
         object.unstash_inplace(&mut stash_out)?;
 
         if !stash_out.is_finished() {
-            return Err(UnstashError::UnfinishedObject);
+            return Err(UnstashError::NotFinished);
         }
-
-        // TODO: check that hash matches original?
-        // avoid possibly checking TypeID hashes between program runs, e.g. if data was saved to disk
 
         Ok(())
     }
@@ -198,6 +201,32 @@ impl Stash {
     ) -> Result<(), UnstashError> {
         self.map.borrow().unstash_inplace(handle.hash, object)
     }
+
+    pub fn test_roundtrip<T: 'static + Stashable + Unstashable>(
+        &self,
+        object: &T,
+    ) -> Result<(), UnstashError> {
+        let handle = self.stash(object);
+        let unstashed_object = self.unstash(&handle)?;
+        let new_hash = TypeSaltedHash::hash_object(&unstashed_object);
+        if new_hash != handle.object_hash() {
+            return Err(UnstashError::NotTheSame);
+        }
+        Ok(())
+    }
+
+    pub fn test_roundtrip_inplace<T: 'static + Stashable + UnstashableInplace>(
+        &self,
+        object: &mut T,
+    ) -> Result<(), UnstashError> {
+        let handle = self.stash(object);
+        self.unstash_inplace(&handle, object)?;
+        let new_hash = TypeSaltedHash::hash_object(object);
+        if new_hash != handle.object_hash() {
+            return Err(UnstashError::NotTheSame);
+        }
+        Ok(())
+    }
 }
 
 pub struct StashHandle<T> {
@@ -211,6 +240,32 @@ impl<T> StashHandle<T> {
         StashHandle {
             map,
             hash,
+            _phantom_data: PhantomData,
+        }
+    }
+
+    pub(crate) fn object_hash(&self) -> TypeSaltedHash {
+        self.hash
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reference_count(&self) -> u16 {
+        self.map
+            .borrow()
+            .objects
+            .get(&self.hash)
+            .unwrap()
+            .reference_count
+            .get()
+    }
+}
+
+impl<T> Clone for StashHandle<T> {
+    fn clone(&self) -> Self {
+        self.map.borrow().add_reference(self.hash);
+        Self {
+            map: Rc::clone(&self.map),
+            hash: self.hash,
             _phantom_data: PhantomData,
         }
     }

@@ -3,13 +3,14 @@ use crate::{
     UnstashableInplace, ValueType,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnstashError {
     WrongValueType,
     OutOfData,
     Corrupted,
-    ObjectNotFound,
-    UnfinishedObject,
+    NotFinished,
+    NotFound,
+    NotTheSame,
 }
 
 pub struct Unstasher<'a> {
