@@ -13,19 +13,19 @@ pub enum UnstashError {
     NotTheSame,
 }
 
-pub struct Unstasher<'a> {
+pub(crate) struct UnstasherBackend<'a> {
     bytes: &'a [u8],
     dependencies: &'a [TypeSaltedHash],
     stashmap: &'a StashMap,
 }
 
 /// Private methods
-impl<'a> Unstasher<'a> {
+impl<'a> UnstasherBackend<'a> {
     pub(crate) fn from_stashed_object(
         stashed_object: &'a StashedObject,
         stashmap: &'a StashMap,
-    ) -> Unstasher<'a> {
-        Unstasher {
+    ) -> UnstasherBackend<'a> {
+        UnstasherBackend {
             bytes: &stashed_object.bytes,
             dependencies: &stashed_object.dependencies,
             stashmap,
@@ -88,7 +88,7 @@ impl<'a> Unstasher<'a> {
     /// Try to perform an operation, get its result, and
     /// rollback the position in the underlying byte vector
     /// if it failed.
-    fn reset_on_error<T: 'a, F: FnOnce(&mut Unstasher<'a>) -> Result<T, UnstashError>>(
+    fn reset_on_error<T: 'a, F: FnOnce(&mut UnstasherBackend<'a>) -> Result<T, UnstashError>>(
         &mut self,
         f: F,
     ) -> Result<T, UnstashError> {
@@ -139,114 +139,8 @@ impl<'a> Unstasher<'a> {
     }
 }
 
-/// Public methods
-impl<'a> Unstasher<'a> {
-    /// Read a single bool value
-    pub fn bool(&mut self) -> Result<bool, UnstashError> {
-        self.read_primitive::<bool>()
-    }
-
-    /// Read a single u8 value
-    pub fn u8(&mut self) -> Result<u8, UnstashError> {
-        self.read_primitive::<u8>()
-    }
-
-    /// Read a single i8 value
-    pub fn i8(&mut self) -> Result<i8, UnstashError> {
-        self.read_primitive::<i8>()
-    }
-
-    /// Read a single u16 value
-    pub fn u16(&mut self) -> Result<u16, UnstashError> {
-        self.read_primitive::<u16>()
-    }
-
-    /// Read a single i16 value
-    pub fn i16(&mut self) -> Result<i16, UnstashError> {
-        self.read_primitive::<i16>()
-    }
-
-    /// Read a single u32 value
-    pub fn u32(&mut self) -> Result<u32, UnstashError> {
-        self.read_primitive::<u32>()
-    }
-
-    /// Read a single i32 value
-    pub fn i32(&mut self) -> Result<i32, UnstashError> {
-        self.read_primitive::<i32>()
-    }
-
-    /// Read a single u64 value
-    pub fn u64(&mut self) -> Result<u64, UnstashError> {
-        self.read_primitive::<u64>()
-    }
-
-    /// Read a single i64 value
-    pub fn i64(&mut self) -> Result<i64, UnstashError> {
-        self.read_primitive::<i64>()
-    }
-
-    /// Read a single f32 value
-    pub fn f32(&mut self) -> Result<f32, UnstashError> {
-        self.read_primitive::<f32>()
-    }
-
-    /// Read a single f64 value
-    pub fn f64(&mut self) -> Result<f64, UnstashError> {
-        self.read_primitive::<f64>()
-    }
-
-    /// Read an array of u8 values into a Vec
-    pub fn array_slice_u8(&mut self) -> Result<Vec<u8>, UnstashError> {
-        self.read_primitive_array_slice::<u8>()
-    }
-
-    /// Read an array of i8 values into a Vec
-    pub fn array_slice_i8(&mut self) -> Result<Vec<i8>, UnstashError> {
-        self.read_primitive_array_slice::<i8>()
-    }
-
-    /// Read an array of u16 values into a Vec
-    pub fn array_slice_u16(&mut self) -> Result<Vec<u16>, UnstashError> {
-        self.read_primitive_array_slice::<u16>()
-    }
-
-    /// Read an array of i16 values into a Vec
-    pub fn array_slice_i16(&mut self) -> Result<Vec<i16>, UnstashError> {
-        self.read_primitive_array_slice::<i16>()
-    }
-
-    /// Read an array of u32 values into a Vec
-    pub fn array_slice_u32(&mut self) -> Result<Vec<u32>, UnstashError> {
-        self.read_primitive_array_slice::<u32>()
-    }
-
-    /// Read an array of i32 values into a Vec
-    pub fn array_slice_i32(&mut self) -> Result<Vec<i32>, UnstashError> {
-        self.read_primitive_array_slice::<i32>()
-    }
-
-    /// Read an array of u64 values into a Vec
-    pub fn array_slice_u64(&mut self) -> Result<Vec<u64>, UnstashError> {
-        self.read_primitive_array_slice::<u64>()
-    }
-
-    /// Read an array of i64 values into a Vec
-    pub fn array_slice_i64(&mut self) -> Result<Vec<i64>, UnstashError> {
-        self.read_primitive_array_slice::<i64>()
-    }
-
-    /// Read an array of f32 values into a Vec
-    pub fn array_slice_f32(&mut self) -> Result<Vec<f32>, UnstashError> {
-        self.read_primitive_array_slice::<f32>()
-    }
-
-    /// Read an array of f64 values into a Vec
-    pub fn array_slice_f64(&mut self) -> Result<Vec<f64>, UnstashError> {
-        self.read_primitive_array_slice::<f64>()
-    }
-
-    pub fn unstash<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
+impl<'a> UnstasherBackend<'a> {
+    fn unstash<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
         self.reset_on_error(|unstasher| {
             if ValueType::from_byte(unstasher.read_byte()?)? != ValueType::StashedObject {
                 return Err(UnstashError::WrongValueType);
@@ -259,7 +153,7 @@ impl<'a> Unstasher<'a> {
         })
     }
 
-    pub fn unstash_inplace<T: 'static + UnstashableInplace>(
+    fn unstash_inplace<T: 'static + UnstashableInplace>(
         &mut self,
         object: &mut T,
     ) -> Result<(), UnstashError> {
@@ -275,8 +169,7 @@ impl<'a> Unstasher<'a> {
         })
     }
 
-    /// Read a string
-    pub fn string(&mut self) -> Result<String, UnstashError> {
+    fn string(&mut self) -> Result<String, UnstashError> {
         if self.remaining_len() < (u8::SIZE + u32::SIZE) {
             return Err(UnstashError::OutOfData);
         }
@@ -291,13 +184,12 @@ impl<'a> Unstasher<'a> {
     }
 
     /// Read the type of the next value
-    pub fn peek_type(&self) -> Result<ValueType, UnstashError> {
+    fn peek_type(&self) -> Result<ValueType, UnstashError> {
         ValueType::from_byte(self.peek_byte()?)
     }
 
-    /// If the next type is an array, string, or nested chive,
-    /// get its length, in bytes
-    pub fn peek_length_bytes(&self) -> Result<usize, UnstashError> {
+    /// If the next type is an array or string, get its length in bytes
+    fn peek_length_bytes(&self) -> Result<usize, UnstashError> {
         let bytes = self.peek_bytes(5)?;
         let the_type = ValueType::from_byte(bytes[0])?;
         match the_type {
@@ -308,8 +200,324 @@ impl<'a> Unstasher<'a> {
         Ok(u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize)
     }
 
-    /// Returns true iff the chive contains no more data to read
-    pub fn is_empty(&self) -> bool {
+    /// Returns true iff there is no more data to read
+    fn is_empty(&self) -> bool {
         self.bytes.is_empty()
+    }
+}
+
+pub struct Unstasher<'a> {
+    backend: UnstasherBackend<'a>,
+}
+
+impl<'a> Unstasher<'a> {
+    pub(crate) fn new(backend: UnstasherBackend<'a>) -> Unstasher<'a> {
+        Unstasher { backend }
+    }
+
+    pub(crate) fn backend(&self) -> &UnstasherBackend<'a> {
+        &self.backend
+    }
+}
+
+impl<'a> Unstasher<'a> {
+    /// Read a single bool value
+    pub fn bool(&mut self) -> Result<bool, UnstashError> {
+        self.backend.read_primitive::<bool>()
+    }
+
+    /// Read a single u8 value
+    pub fn u8(&mut self) -> Result<u8, UnstashError> {
+        self.backend.read_primitive::<u8>()
+    }
+
+    /// Read a single i8 value
+    pub fn i8(&mut self) -> Result<i8, UnstashError> {
+        self.backend.read_primitive::<i8>()
+    }
+
+    /// Read a single u16 value
+    pub fn u16(&mut self) -> Result<u16, UnstashError> {
+        self.backend.read_primitive::<u16>()
+    }
+
+    /// Read a single i16 value
+    pub fn i16(&mut self) -> Result<i16, UnstashError> {
+        self.backend.read_primitive::<i16>()
+    }
+
+    /// Read a single u32 value
+    pub fn u32(&mut self) -> Result<u32, UnstashError> {
+        self.backend.read_primitive::<u32>()
+    }
+
+    /// Read a single i32 value
+    pub fn i32(&mut self) -> Result<i32, UnstashError> {
+        self.backend.read_primitive::<i32>()
+    }
+
+    /// Read a single u64 value
+    pub fn u64(&mut self) -> Result<u64, UnstashError> {
+        self.backend.read_primitive::<u64>()
+    }
+
+    /// Read a single i64 value
+    pub fn i64(&mut self) -> Result<i64, UnstashError> {
+        self.backend.read_primitive::<i64>()
+    }
+
+    /// Read a single f32 value
+    pub fn f32(&mut self) -> Result<f32, UnstashError> {
+        self.backend.read_primitive::<f32>()
+    }
+
+    /// Read a single f64 value
+    pub fn f64(&mut self) -> Result<f64, UnstashError> {
+        self.backend.read_primitive::<f64>()
+    }
+
+    /// Read an array of u8 values into a Vec
+    pub fn array_slice_u8(&mut self) -> Result<Vec<u8>, UnstashError> {
+        self.backend.read_primitive_array_slice::<u8>()
+    }
+
+    /// Read an array of i8 values into a Vec
+    pub fn array_slice_i8(&mut self) -> Result<Vec<i8>, UnstashError> {
+        self.backend.read_primitive_array_slice::<i8>()
+    }
+
+    /// Read an array of u16 values into a Vec
+    pub fn array_slice_u16(&mut self) -> Result<Vec<u16>, UnstashError> {
+        self.backend.read_primitive_array_slice::<u16>()
+    }
+
+    /// Read an array of i16 values into a Vec
+    pub fn array_slice_i16(&mut self) -> Result<Vec<i16>, UnstashError> {
+        self.backend.read_primitive_array_slice::<i16>()
+    }
+
+    /// Read an array of u32 values into a Vec
+    pub fn array_slice_u32(&mut self) -> Result<Vec<u32>, UnstashError> {
+        self.backend.read_primitive_array_slice::<u32>()
+    }
+
+    /// Read an array of i32 values into a Vec
+    pub fn array_slice_i32(&mut self) -> Result<Vec<i32>, UnstashError> {
+        self.backend.read_primitive_array_slice::<i32>()
+    }
+
+    /// Read an array of u64 values into a Vec
+    pub fn array_slice_u64(&mut self) -> Result<Vec<u64>, UnstashError> {
+        self.backend.read_primitive_array_slice::<u64>()
+    }
+
+    /// Read an array of i64 values into a Vec
+    pub fn array_slice_i64(&mut self) -> Result<Vec<i64>, UnstashError> {
+        self.backend.read_primitive_array_slice::<i64>()
+    }
+
+    /// Read an array of f32 values into a Vec
+    pub fn array_slice_f32(&mut self) -> Result<Vec<f32>, UnstashError> {
+        self.backend.read_primitive_array_slice::<f32>()
+    }
+
+    /// Read an array of f64 values into a Vec
+    pub fn array_slice_f64(&mut self) -> Result<Vec<f64>, UnstashError> {
+        self.backend.read_primitive_array_slice::<f64>()
+    }
+
+    pub fn string(&mut self) -> Result<String, UnstashError> {
+        self.backend.string()
+    }
+
+    pub fn unstash<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
+        self.backend.unstash()
+    }
+
+    pub fn peek_type(&self) -> Result<ValueType, UnstashError> {
+        self.backend.peek_type()
+    }
+
+    pub fn peek_length_bytes(&self) -> Result<usize, UnstashError> {
+        self.backend.peek_length_bytes()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.backend.is_empty()
+    }
+}
+
+pub struct InplaceUnstasher<'a> {
+    backend: UnstasherBackend<'a>,
+}
+
+impl<'a> InplaceUnstasher<'a> {
+    pub(crate) fn new(backend: UnstasherBackend<'a>) -> InplaceUnstasher<'a> {
+        InplaceUnstasher { backend }
+    }
+
+    pub(crate) fn backend(&self) -> &UnstasherBackend<'a> {
+        &self.backend
+    }
+}
+
+impl<'a> InplaceUnstasher<'a> {
+    /// Read a single bool value
+    pub fn bool(&mut self, x: &mut bool) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<bool>()?;
+        Ok(())
+    }
+
+    /// Read a single u8 value
+    pub fn u8(&mut self, x: &mut u8) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<u8>()?;
+        Ok(())
+    }
+
+    /// Read a single i8 value
+    pub fn i8(&mut self, x: &mut i8) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<i8>()?;
+        Ok(())
+    }
+
+    /// Read a single u16 value
+    pub fn u16(&mut self, x: &mut u16) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<u16>()?;
+        Ok(())
+    }
+
+    /// Read a single i16 value
+    pub fn i16(&mut self, x: &mut i16) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<i16>()?;
+        Ok(())
+    }
+
+    /// Read a single u32 value
+    pub fn u32(&mut self, x: &mut u32) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<u32>()?;
+        Ok(())
+    }
+
+    /// Read a single i32 value
+    pub fn i32(&mut self, x: &mut i32) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<i32>()?;
+        Ok(())
+    }
+
+    /// Read a single u64 value
+    pub fn u64(&mut self, x: &mut u64) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<u64>()?;
+        Ok(())
+    }
+
+    /// Read a single i64 value
+    pub fn i64(&mut self, x: &mut i64) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<i64>()?;
+        Ok(())
+    }
+
+    /// Read a single f32 value
+    pub fn f32(&mut self, x: &mut f32) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<f32>()?;
+        Ok(())
+    }
+
+    /// Read a single f64 value
+    pub fn f64(&mut self, x: &mut f64) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive::<f64>()?;
+        Ok(())
+    }
+
+    /// Read an array of u8 values into a Vec
+    pub fn array_slice_u8(&mut self, x: &mut Vec<u8>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<u8>()?;
+        Ok(())
+    }
+
+    /// Read an array of i8 values into a Vec
+    pub fn array_slice_i8(&mut self, x: &mut Vec<i8>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<i8>()?;
+        Ok(())
+    }
+
+    /// Read an array of u16 values into a Vec
+    pub fn array_slice_u16(&mut self, x: &mut Vec<u16>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<u16>()?;
+        Ok(())
+    }
+
+    /// Read an array of i16 values into a Vec
+    pub fn array_slice_i16(&mut self, x: &mut Vec<i16>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<i16>()?;
+        Ok(())
+    }
+
+    /// Read an array of u32 values into a Vec
+    pub fn array_slice_u32(&mut self, x: &mut Vec<u32>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<u32>()?;
+        Ok(())
+    }
+
+    /// Read an array of i32 values into a Vec
+    pub fn array_slice_i32(&mut self, x: &mut Vec<i32>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<i32>()?;
+        Ok(())
+    }
+
+    /// Read an array of u64 values into a Vec
+    pub fn array_slice_u64(&mut self, x: &mut Vec<u64>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<u64>()?;
+        Ok(())
+    }
+
+    /// Read an array of i64 values into a Vec
+    pub fn array_slice_i64(&mut self, x: &mut Vec<i64>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<i64>()?;
+        Ok(())
+    }
+
+    /// Read an array of f32 values into a Vec
+    pub fn array_slice_f32(&mut self, x: &mut Vec<f32>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<f32>()?;
+        Ok(())
+    }
+
+    /// Read an array of f64 values into a Vec
+    pub fn array_slice_f64(&mut self, x: &mut Vec<f64>) -> Result<(), UnstashError> {
+        *x = self.backend.read_primitive_array_slice::<f64>()?;
+        Ok(())
+    }
+
+    pub fn string(&mut self, x: &mut String) -> Result<(), UnstashError> {
+        *x = self.backend.string()?;
+        Ok(())
+    }
+
+    pub fn unstash<T: 'static + Unstashable>(
+        &mut self,
+        object: &mut T,
+    ) -> Result<(), UnstashError> {
+        *object = self.backend.unstash()?;
+        Ok(())
+    }
+
+    pub fn unstash_inplace<T: 'static + UnstashableInplace>(
+        &mut self,
+        object: &mut T,
+    ) -> Result<(), UnstashError> {
+        // TODO: propagate validation/write phase
+        self.backend.unstash_inplace(object)
+    }
+
+    pub fn peek_type(&self) -> Result<ValueType, UnstashError> {
+        self.backend.peek_type()
+    }
+
+    pub fn peek_length_bytes(&self) -> Result<usize, UnstashError> {
+        self.backend.peek_length_bytes()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.backend.is_empty()
     }
 }

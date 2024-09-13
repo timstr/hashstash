@@ -1,4 +1,8 @@
-use crate::{stasher::Stasher, unstasher::Unstasher, UnstashError};
+use crate::{
+    stasher::Stasher,
+    unstasher::{Unstasher, UnstasherBackend},
+    UnstashError,
+};
 
 /// Enum for the set of primitive fixed-size types that are supported
 #[derive(PartialEq, Eq, Debug)]
@@ -107,7 +111,7 @@ pub(crate) trait PrimitiveReadWrite {
 
     /// Read self from the byte slice, moving it forward.
     /// This method may panic if there are fewer than Self::SIZE bytes in the vector.
-    fn read_raw_bytes_from(unstasher: &mut Unstasher) -> Self;
+    fn read_raw_bytes_from(unstasher: &mut UnstasherBackend) -> Self;
 }
 
 /// Macro for implementing the PrimitiveReadWrite helper trait for a given
@@ -122,7 +126,7 @@ macro_rules! impl_primitive_read_write {
             fn write_raw_bytes_to(&self, stasher: &mut Stasher) {
                 stasher.write_raw_bytes(&self.to_be_bytes());
             }
-            fn read_raw_bytes_from(unstasher: &mut Unstasher) -> Self {
+            fn read_raw_bytes_from(unstasher: &mut UnstasherBackend) -> Self {
                 let bytes = unstasher
                     .read_raw_bytes_fixed_len::<{ Self::SIZE }>()
                     .unwrap();
@@ -153,7 +157,7 @@ impl PrimitiveReadWrite for bool {
         stasher.write_raw_bytes(&[if *self { 1 } else { 0 }]);
     }
 
-    fn read_raw_bytes_from(unstasher: &mut Unstasher) -> bool {
+    fn read_raw_bytes_from(unstasher: &mut UnstasherBackend) -> bool {
         unstasher.read_byte().unwrap() == 1
     }
 }

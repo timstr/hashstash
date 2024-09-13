@@ -15,6 +15,7 @@ mod valuetypes;
 mod test;
 
 pub use stasher::Stasher;
+use unstasher::{InplaceUnstasher, UnstasherBackend};
 pub use unstasher::{UnstashError, Unstasher};
 pub use valuetypes::{PrimitiveType, ValueType};
 
@@ -27,7 +28,7 @@ pub trait Unstashable: Sized {
 }
 
 pub trait UnstashableInplace {
-    fn unstash_inplace(&mut self, unstasher: &mut Unstasher) -> Result<(), UnstashError>;
+    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError>;
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -106,11 +107,12 @@ impl StashMap {
             return Err(UnstashError::NotFound);
         };
 
-        let mut stash_out = Unstasher::from_stashed_object(stashed_object, self);
+        let mut stash_out =
+            Unstasher::new(UnstasherBackend::from_stashed_object(stashed_object, self));
 
         let object = T::unstash(&mut stash_out)?;
 
-        if !stash_out.is_finished() {
+        if !stash_out.backend().is_finished() {
             return Err(UnstashError::NotFinished);
         }
 
@@ -127,11 +129,12 @@ impl StashMap {
             return Err(UnstashError::NotFound);
         };
 
-        let mut stash_out = Unstasher::from_stashed_object(stashed_object, self);
+        let mut stash_out =
+            InplaceUnstasher::new(UnstasherBackend::from_stashed_object(stashed_object, self));
 
         object.unstash_inplace(&mut stash_out)?;
 
-        if !stash_out.is_finished() {
+        if !stash_out.backend().is_finished() {
             return Err(UnstashError::NotFinished);
         }
 

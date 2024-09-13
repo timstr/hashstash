@@ -1,4 +1,7 @@
-use crate::{Stash, Stashable, Stasher, UnstashError, Unstashable, UnstashableInplace, Unstasher};
+use crate::{
+    unstasher::InplaceUnstasher, Stash, Stashable, Stasher, UnstashError, Unstashable,
+    UnstashableInplace, Unstasher,
+};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 struct StructA {
@@ -26,10 +29,10 @@ impl Unstashable for StructA {
 }
 
 impl UnstashableInplace for StructA {
-    fn unstash_inplace(&mut self, unstasher: &mut Unstasher) -> Result<(), UnstashError> {
-        self.i = unstasher.i32()?;
-        self.x = unstasher.u64()?;
-        self.s = unstasher.string()?;
+    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
+        unstasher.i32(&mut self.i)?;
+        unstasher.u64(&mut self.x)?;
+        unstasher.string(&mut self.s)?;
         Ok(())
     }
 }
@@ -194,12 +197,12 @@ impl Unstashable for StructB {
 }
 
 impl UnstashableInplace for StructB {
-    fn unstash_inplace(&mut self, unstasher: &mut Unstasher) -> Result<(), UnstashError> {
-        self.a1 = unstasher.unstash()?;
-        self.b = unstasher.bool()?;
-        self.a2 = unstasher.unstash()?;
-        self.u = unstasher.u8()?;
-        self.a3 = unstasher.unstash()?;
+    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
+        unstasher.unstash_inplace(&mut self.a1)?;
+        unstasher.bool(&mut self.b)?;
+        unstasher.unstash_inplace(&mut self.a2)?;
+        unstasher.u8(&mut self.u)?;
+        unstasher.unstash_inplace(&mut self.a3)?;
         Ok(())
     }
 }
