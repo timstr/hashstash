@@ -15,7 +15,7 @@ mod valuetypes;
 mod test;
 
 pub use stasher::Stasher;
-use unstasher::{InplaceUnstasher, UnstasherBackend};
+use unstasher::{InplaceUnstashPhase, InplaceUnstasher, UnstasherBackend};
 pub use unstasher::{UnstashError, Unstasher};
 pub use valuetypes::{PrimitiveType, ValueType};
 
@@ -123,14 +123,17 @@ impl StashMap {
         &self,
         hash: TypeSaltedHash,
         object: &mut T,
+        phase: InplaceUnstashPhase,
     ) -> Result<(), UnstashError> {
         let Some(stashed_object) = self.objects.get(&hash) else {
             // Is this ever possible?
             return Err(UnstashError::NotFound);
         };
 
-        let mut stash_out =
-            InplaceUnstasher::new(UnstasherBackend::from_stashed_object(stashed_object, self));
+        let mut stash_out = InplaceUnstasher::new(
+            UnstasherBackend::from_stashed_object(stashed_object, self),
+            phase,
+        );
 
         object.unstash_inplace(&mut stash_out)?;
 
@@ -202,34 +205,102 @@ impl Stash {
         handle: &StashHandle<T>,
         object: &mut T,
     ) -> Result<(), UnstashError> {
-        self.map.borrow().unstash_inplace(handle.hash, object)
+        let map = self.map.borrow();
+        map.unstash_inplace(handle.hash, object, InplaceUnstashPhase::Validate)?;
+        map.unstash_inplace(handle.hash, object, InplaceUnstashPhase::Write)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum RoundTripError {
+    BasicUnstashError(UnstashError),
+    UncaughtUnstashError(UnstashError),
+    NotTheSame,
+    ModifiedDuringValidation,
+    SameHashAfterModifying,
+}
+
+pub fn test_stash_roundtrip<T: 'static + Stashable + Unstashable, Create, Modify>(
+    mut create: Create,
+    mut modify_object: Modify,
+) -> Result<(), RoundTripError>
+where
+    Create: FnMut() -> T,
+    Modify: FnMut(&mut T),
+{
+    let mut object = create();
+
+    let stash = Stash::new();
+    let handle_to_original = stash.stash(&object);
+
+    modify_object(&mut object);
+
+    let hash_after_modifying = TypeSaltedHash::hash_object(&object);
+
+    if hash_after_modifying == handle_to_original.object_hash() {
+        return Err(RoundTripError::SameHashAfterModifying);
     }
 
-    pub fn test_roundtrip<T: 'static + Stashable + Unstashable>(
-        &self,
-        object: &T,
-    ) -> Result<(), UnstashError> {
-        let handle = self.stash(object);
-        let unstashed_object = self.unstash(&handle)?;
-        let new_hash = TypeSaltedHash::hash_object(&unstashed_object);
-        if new_hash != handle.object_hash() {
-            return Err(UnstashError::NotTheSame);
-        }
-        Ok(())
+    let unstashed_object = stash
+        .unstash(&handle_to_original)
+        .map_err(|e| RoundTripError::BasicUnstashError(e))?;
+
+    let hash_after_unstashing = TypeSaltedHash::hash_object(&unstashed_object);
+    if hash_after_unstashing != handle_to_original.object_hash() {
+        return Err(RoundTripError::NotTheSame);
     }
 
-    pub fn test_roundtrip_inplace<T: 'static + Stashable + UnstashableInplace>(
-        &self,
-        object: &mut T,
-    ) -> Result<(), UnstashError> {
-        let handle = self.stash(object);
-        self.unstash_inplace(&handle, object)?;
-        let new_hash = TypeSaltedHash::hash_object(object);
-        if new_hash != handle.object_hash() {
-            return Err(UnstashError::NotTheSame);
-        }
-        Ok(())
+    Ok(())
+}
+
+pub fn test_stash_roundtrip_inplace<T: 'static + Stashable + UnstashableInplace, Create, Modify>(
+    mut create: Create,
+    mut modify: Modify,
+) -> Result<(), RoundTripError>
+where
+    Create: FnMut() -> T,
+    Modify: FnMut(&mut T),
+{
+    let mut object = create();
+
+    let stash = Stash::new();
+    let handle_to_original = stash.stash(&object);
+
+    modify(&mut object);
+
+    let hash_after_modifying = TypeSaltedHash::hash_object(&object);
+    if hash_after_modifying == handle_to_original.object_hash() {
+        return Err(RoundTripError::SameHashAfterModifying);
     }
+
+    let hash_before_validation = hash_after_modifying;
+
+    let map = stash.map.borrow();
+    map.unstash_inplace(
+        handle_to_original.hash,
+        &mut object,
+        InplaceUnstashPhase::Validate,
+    )
+    .map_err(|e| RoundTripError::BasicUnstashError(e))?;
+
+    let hash_after_validation = TypeSaltedHash::hash_object(&object);
+    if hash_after_validation != hash_before_validation {
+        return Err(RoundTripError::ModifiedDuringValidation);
+    }
+
+    map.unstash_inplace(
+        handle_to_original.hash,
+        &mut object,
+        InplaceUnstashPhase::Write,
+    )
+    .map_err(|e| RoundTripError::UncaughtUnstashError(e))?;
+
+    let hash_after_write = TypeSaltedHash::hash_object(&object);
+    if hash_after_write != handle_to_original.object_hash() {
+        return Err(RoundTripError::NotTheSame);
+    }
+
+    Ok(())
 }
 
 pub struct StashHandle<T> {

@@ -1,8 +1,4 @@
-use crate::{
-    stasher::Stasher,
-    unstasher::{Unstasher, UnstasherBackend},
-    UnstashError,
-};
+use crate::{stasher::Stasher, unstasher::UnstasherBackend, UnstashError};
 
 /// Enum for the set of primitive fixed-size types that are supported
 #[derive(PartialEq, Eq, Debug)]
