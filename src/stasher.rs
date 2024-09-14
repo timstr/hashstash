@@ -20,7 +20,9 @@ enum StasherBackend<'a> {
 impl<'a> StasherBackend<'a> {
     fn write_raw_bytes(&mut self, bytes: &[u8]) {
         match self {
-            StasherBackend::Hash(hash) => hash.hasher.write(bytes),
+            StasherBackend::Hash(hash) => {
+                hash.hasher.write(bytes);
+            }
             StasherBackend::Serialize(serialize) => serialize.data.extend_from_slice(bytes),
         }
     }
@@ -34,6 +36,31 @@ impl<'a> StasherBackend<'a> {
             StasherBackend::Serialize(serializer) => {
                 let hash = serializer.stashmap.stash_and_add_reference(object);
                 serializer.dependencies.push(hash);
+            }
+        }
+    }
+
+    fn bookmark_length_prefix(&mut self) -> usize {
+        match self {
+            StasherBackend::Hash(_) => usize::MAX,
+            StasherBackend::Serialize(serializer) => {
+                let bookmark = serializer.data.len();
+                let placeholder_length: u32 = 0;
+                for b in placeholder_length.to_be_bytes() {
+                    serializer.data.push(b);
+                }
+                bookmark
+            }
+        }
+    }
+
+    fn write_length_prefix(&mut self, bookmark: usize, length: u32) {
+        match self {
+            StasherBackend::Hash(hasher) => hasher.hasher.write_u32(length),
+            StasherBackend::Serialize(serializer) => {
+                for (i, b) in length.to_be_bytes().into_iter().enumerate() {
+                    serializer.data[bookmark + i] = b;
+                }
             }
         }
     }
@@ -70,19 +97,22 @@ impl<'a> Stasher<'a> {
     }
 
     /// Helper method to write a primitive
-    pub(crate) fn write_primitive<T: PrimitiveReadWrite>(&mut self, x: T) {
+    fn write_primitive<T: PrimitiveReadWrite>(&mut self, x: T) {
         self.write_raw_bytes(&[ValueType::Primitive(T::TYPE).to_byte()]);
         x.write_raw_bytes_to(self);
     }
 
     /// Helper method to write a slice of primitives
-    pub(crate) fn write_primitive_array_slice<T: PrimitiveReadWrite>(&mut self, x: &[T]) {
-        self.write_raw_bytes(&[ValueType::Array(T::TYPE).to_byte()]);
-        let len = x.len() as u32;
-        len.write_raw_bytes_to(self);
-        for xi in x {
-            xi.write_raw_bytes_to(self);
+    fn write_primitive_array<T: PrimitiveReadWrite, I: Iterator<Item = T>>(&mut self, it: I) {
+        self.backend
+            .write_raw_bytes(&[ValueType::Array(T::TYPE).to_byte()]);
+        let bookmark = self.backend.bookmark_length_prefix();
+        let mut length: u32 = 0;
+        for x in it {
+            x.write_raw_bytes_to(self);
+            length += 1;
         }
+        self.backend.write_length_prefix(bookmark, length);
     }
 }
 
@@ -145,64 +175,112 @@ impl<'a> Stasher<'a> {
 
     /// Write an array of u8 values from a slice
     pub fn array_slice_u8(&mut self, x: &[u8]) {
-        self.write_primitive_array_slice::<u8>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of i8 values from a slice
     pub fn array_slice_i8(&mut self, x: &[i8]) {
-        self.write_primitive_array_slice::<i8>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of u16 values from a slice
     pub fn array_slice_u16(&mut self, x: &[u16]) {
-        self.write_primitive_array_slice::<u16>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of i16 values from a slice
     pub fn array_slice_i16(&mut self, x: &[i16]) {
-        self.write_primitive_array_slice::<i16>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of u32 values from a slice
     pub fn array_slice_u32(&mut self, x: &[u32]) {
-        self.write_primitive_array_slice::<u32>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of i32 values from a slice
     pub fn array_slice_i32(&mut self, x: &[i32]) {
-        self.write_primitive_array_slice::<i32>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of u64 values from a slice
     pub fn array_slice_u64(&mut self, x: &[u64]) {
-        self.write_primitive_array_slice::<u64>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of i64 values from a slice
     pub fn array_slice_i64(&mut self, x: &[i64]) {
-        self.write_primitive_array_slice::<i64>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of f32 values from a slice
     pub fn array_slice_f32(&mut self, x: &[f32]) {
-        self.write_primitive_array_slice::<f32>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
     /// Write an array of f64 values from a slice
     pub fn array_slice_f64(&mut self, x: &[f64]) {
-        self.write_primitive_array_slice::<f64>(x);
+        self.write_primitive_array(x.iter().cloned());
     }
 
-    // TODO: iterator support, needs some way to indicate
-    // length prefix without consuming iterator just to count it
+    /// Write an array of u8 values from an iterator
+    pub fn array_iter_u8<I: Iterator<Item = u8>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of i8 values from an iterator
+    pub fn array_iter_i8<I: Iterator<Item = i8>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of u16 values from an iterator
+    pub fn array_iter_u16<I: Iterator<Item = u16>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of i16 values from an iterator
+    pub fn array_iter_i16<I: Iterator<Item = i16>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of u32 values from an iterator
+    pub fn array_iter_u32<I: Iterator<Item = u32>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of i32 values from an iterator
+    pub fn array_iter_i32<I: Iterator<Item = i32>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of u64 values from an iterator
+    pub fn array_iter_u64<I: Iterator<Item = u64>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of i64 values from an iterator
+    pub fn array_iter_i64<I: Iterator<Item = i64>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of f32 values from an iterator
+    pub fn array_iter_f32<I: Iterator<Item = f32>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
+
+    /// Write an array of f64 values from an iterator
+    pub fn array_iter_f64<I: Iterator<Item = f64>>(&mut self, it: I) {
+        self.write_primitive_array(it);
+    }
 
     /// Write a string
     pub fn string(&mut self, x: &str) {
+        self.backend.write_raw_bytes(&[ValueType::String.to_byte()]);
+        let bookmark = self.backend.bookmark_length_prefix();
         let bytes = x.as_bytes();
-        self.write_raw_bytes(&[ValueType::String.to_byte()]);
-        let len = bytes.len() as u32;
-        len.write_raw_bytes_to(self);
         self.write_raw_bytes(bytes);
+        self.backend
+            .write_length_prefix(bookmark, bytes.len() as u32);
     }
 
     pub fn stashable<T: 'static + Stashable>(&mut self, object: &T) {
