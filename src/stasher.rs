@@ -273,6 +273,17 @@ impl<'a> Stasher<'a> {
         self.write_primitive_array(it);
     }
 
+    pub fn array_of_objects_slice<T: 'static + Stashable>(&mut self, objects: &[T]) {
+        self.backend
+            .write_raw_bytes(&[ValueType::ArrayOfObjects.to_byte()]);
+        let bookmark = self.backend.bookmark_length_prefix();
+        for object in objects {
+            self.backend.stash_dependency(object);
+        }
+        self.backend
+            .write_length_prefix(bookmark, objects.len() as u32);
+    }
+
     /// Write a string
     pub fn string(&mut self, x: &str) {
         self.backend.write_raw_bytes(&[ValueType::String.to_byte()]);

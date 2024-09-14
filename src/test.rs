@@ -289,48 +289,30 @@ fn test_one_level_nested_struct() {
 
 #[test]
 fn test_roundtrip() {
-    let make_struct_a = || StructA {
+    let create_a = || StructA {
         i: 123,
         x: 0x0123456789abcdef,
         s: "abcde".to_string(),
     };
 
-    let modify_struct_a_i = |s: &mut StructA| {
+    let modify_a_i = |s: &mut StructA| {
         s.i += 1;
     };
-    let modify_struct_a_x = |s: &mut StructA| {
+    let modify_a_x = |s: &mut StructA| {
         s.x = 0x4321;
     };
-    let modify_struct_a_s = |s: &mut StructA| {
+    let modify_a_s = |s: &mut StructA| {
         s.s.push('z');
     };
 
-    assert_eq!(
-        test_stash_roundtrip(make_struct_a, modify_struct_a_i),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip(make_struct_a, modify_struct_a_x),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip(make_struct_a, modify_struct_a_s),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip_inplace(make_struct_a, modify_struct_a_i),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip_inplace(make_struct_a, modify_struct_a_x),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip_inplace(make_struct_a, modify_struct_a_s),
-        Ok(())
-    );
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_i), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_x), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_s), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_a, modify_a_i), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_a, modify_a_x), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_a, modify_a_s), Ok(()));
 
-    let make_struct_b = || StructB {
+    let make_b = || StructB {
         a1: StructA {
             i: 1,
             x: 0x0123456789abcdef,
@@ -350,58 +332,29 @@ fn test_roundtrip() {
         },
     };
 
-    let modify_struct_b_b = |s: &mut StructB| {
+    let modify_b_b = |s: &mut StructB| {
         s.b = !s.b;
     };
-    let modify_struct_b_u = |s: &mut StructB| {
+    let modify_b_u = |s: &mut StructB| {
         s.u += 2;
     };
-    let modify_struct_b_a1 = |s: &mut StructB| s.a1.i += 1;
-    let modify_struct_b_a2 = |s: &mut StructB| s.a2.x ^= 0b101;
-    let modify_struct_b_a3 = |s: &mut StructB| s.a3.s.push_str("blah");
+    let modify_b_a1 = |s: &mut StructB| s.a1.i += 1;
+    let modify_b_a2 = |s: &mut StructB| s.a2.x ^= 0b101;
+    let modify_b_a3 = |s: &mut StructB| s.a3.s.push_str("blah");
 
-    assert_eq!(
-        test_stash_roundtrip(make_struct_b, modify_struct_b_b),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip(make_struct_b, modify_struct_b_u),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip(make_struct_b, modify_struct_b_a1),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip(make_struct_b, modify_struct_b_a2),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip(make_struct_b, modify_struct_b_a3),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip_inplace(make_struct_b, modify_struct_b_b),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip_inplace(make_struct_b, modify_struct_b_u),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip_inplace(make_struct_b, modify_struct_b_a1),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip_inplace(make_struct_b, modify_struct_b_a2),
-        Ok(())
-    );
-    assert_eq!(
-        test_stash_roundtrip_inplace(make_struct_b, modify_struct_b_a3),
-        Ok(())
-    );
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_b), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_u), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a1), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a2), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a3), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_b), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_u), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_a1), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_a2), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_a3), Ok(()));
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct StructWithVecs {
     vec_i32: Vec<i32>,
     vec_u8: Vec<u8>,
@@ -428,6 +381,28 @@ impl UnstashableInplace for StructWithVecs {
         unstasher.array_vec_u8(&mut self.vec_u8)?;
         Ok(())
     }
+}
+
+#[test]
+fn test_struct_with_vec() {
+    let s1 = StructWithVecs {
+        vec_i32: vec![0, 1, 2],
+        vec_u8: vec![9, 8, 7, 6, 5],
+    };
+
+    let stash = Stash::new();
+
+    let handle = stash.stash(&s1);
+
+    let s2 = stash.unstash(&handle).unwrap();
+
+    assert_eq!(s1, s2);
+
+    assert_eq!(stash.num_objects(), 1);
+
+    std::mem::drop(handle);
+
+    assert_eq!(stash.num_objects(), 0);
 }
 
 #[test]
@@ -468,4 +443,87 @@ fn test_roundtrip_struct_with_vecs() {
     assert_eq!(test_stash_roundtrip_inplace(create_3, modify_1), Ok(()));
     assert_eq!(test_stash_roundtrip_inplace(create_3, modify_2), Ok(()));
     assert_eq!(test_stash_roundtrip_inplace(create_3, modify_3), Ok(()));
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StructWithVecOfObjects {
+    objects: Vec<StructA>,
+}
+
+impl Stashable for StructWithVecOfObjects {
+    fn stash(&self, stasher: &mut Stasher) {
+        stasher.array_of_objects_slice(&self.objects);
+    }
+}
+
+impl Unstashable for StructWithVecOfObjects {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
+        Ok(StructWithVecOfObjects {
+            objects: unstasher.array_of_objects_vec()?,
+        })
+    }
+}
+
+#[test]
+fn test_vec_with_struct_of_objects() {
+    let a1 = StructA {
+        i: 1,
+        x: 0x202,
+        s: "abc".to_string(),
+    };
+    let a2 = StructA {
+        i: 2,
+        x: 0x404,
+        s: "defg".to_string(),
+    };
+    let a3 = StructA {
+        i: 3,
+        x: 0x808,
+        s: "hijkl".to_string(),
+    };
+
+    let s1 = StructWithVecOfObjects {
+        objects: vec![
+            a1.clone(),
+            a2.clone(),
+            a2.clone(),
+            a3.clone(),
+            a3.clone(),
+            a3.clone(),
+        ],
+    };
+
+    let stash = Stash::new();
+
+    let handle_s = stash.stash(&s1);
+
+    assert_eq!(stash.num_objects(), 4);
+
+    let s2 = stash.unstash(&handle_s).unwrap();
+
+    assert_eq!(s1, s2);
+
+    let handle_a1 = stash.stash(&a1);
+    let handle_a2 = stash.stash(&a2);
+    let handle_a3 = stash.stash(&a3);
+
+    assert_eq!(stash.num_objects(), 4);
+
+    assert_eq!(handle_a1.reference_count(), 2);
+    assert_eq!(handle_a2.reference_count(), 3);
+    assert_eq!(handle_a3.reference_count(), 4);
+
+    std::mem::drop(handle_s);
+
+    assert_eq!(stash.num_objects(), 3);
+
+    assert_eq!(handle_a1.reference_count(), 1);
+    assert_eq!(handle_a2.reference_count(), 1);
+    assert_eq!(handle_a3.reference_count(), 1);
+
+    std::mem::drop(handle_a1);
+    std::mem::drop(handle_a2);
+    std::mem::drop(handle_a3);
+
+    assert_eq!(stash.num_objects(), 0);
 }

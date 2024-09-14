@@ -102,6 +102,14 @@ impl<'a> UnstasherBackend<'a> {
         }
     }
 
+    fn read_dependency(&mut self) -> Result<TypeSaltedHash, UnstashError> {
+        let Some((hash, remaining_hashes)) = self.dependencies.split_first() else {
+            return Err(UnstashError::Corrupted);
+        };
+        self.dependencies = remaining_hashes;
+        Ok(*hash)
+    }
+
     /// Try to perform an operation, get its result, and
     /// rollback the position in the underlying byte vector
     /// if it failed.
@@ -182,19 +190,38 @@ impl<'a> UnstasherBackend<'a> {
             Ok(iterator)
         })
     }
-}
 
-impl<'a> UnstasherBackend<'a> {
+    fn read_array_of_object_vec<T: 'static + Unstashable>(
+        &mut self,
+    ) -> Result<Vec<T>, UnstashError> {
+        self.reset_on_error(|unstasher| {
+            if unstasher.remaining_len() < (u8::SIZE + u32::SIZE) {
+                return Err(UnstashError::OutOfData);
+            }
+            let the_type = ValueType::from_byte(unstasher.read_byte().unwrap())?;
+            if the_type != ValueType::ArrayOfObjects {
+                return Err(UnstashError::WrongValueType);
+            }
+            let len = u32::read_raw_bytes_from(&mut unstasher.bytes) as usize;
+            if unstasher.dependencies.len() < len {
+                return Err(UnstashError::Corrupted);
+            }
+            let mut v = Vec::with_capacity(len);
+            for _ in 0..len {
+                let hash = unstasher.read_dependency()?;
+                v.push(self.stashmap.unstash(hash)?);
+            }
+            Ok(v)
+        })
+    }
+
     fn unstash<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
         self.reset_on_error(|unstasher| {
             if ValueType::from_byte(unstasher.read_byte()?)? != ValueType::StashedObject {
                 return Err(UnstashError::WrongValueType);
             }
-            let Some((hash, remaining_hashes)) = unstasher.dependencies.split_first() else {
-                return Err(UnstashError::Corrupted);
-            };
-            unstasher.dependencies = remaining_hashes;
-            unstasher.stashmap.unstash::<T>(*hash)
+            let hash = unstasher.read_dependency()?;
+            unstasher.stashmap.unstash::<T>(hash)
         })
     }
 
@@ -207,11 +234,8 @@ impl<'a> UnstasherBackend<'a> {
             if ValueType::from_byte(unstasher.read_byte()?)? != ValueType::StashedObject {
                 return Err(UnstashError::WrongValueType);
             }
-            let Some((hash, remaining_hashes)) = unstasher.dependencies.split_first() else {
-                return Err(UnstashError::Corrupted);
-            };
-            unstasher.dependencies = remaining_hashes;
-            unstasher.stashmap.unstash_inplace(*hash, object, phase)
+            let hash = unstasher.read_dependency()?;
+            unstasher.stashmap.unstash_inplace(hash, object, phase)
         })
     }
 
@@ -242,6 +266,7 @@ impl<'a> UnstasherBackend<'a> {
         match the_type {
             ValueType::Array(_) => (),
             ValueType::String => (),
+            ValueType::ArrayOfObjects => (),
             _ => return Err(UnstashError::WrongValueType),
         }
         Ok(u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize)
@@ -421,6 +446,12 @@ impl<'a> Unstasher<'a> {
     /// Read an array of f64 values via an iterator
     pub fn array_iter_f64(&mut self) -> Result<UnstashIterator<f64>, UnstashError> {
         self.backend.read_primitive_array_iter()
+    }
+
+    pub fn array_of_objects_vec<T: 'static + Unstashable>(
+        &mut self,
+    ) -> Result<Vec<T>, UnstashError> {
+        self.backend.read_array_of_object_vec()
     }
 
     pub fn string(&mut self) -> Result<String, UnstashError> {

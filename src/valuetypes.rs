@@ -30,6 +30,9 @@ pub enum ValueType {
 
     /// Another object elsewhere in the stash
     StashedObject,
+
+    /// An array of objects elsewhere in the stash
+    ArrayOfObjects,
 }
 
 impl PrimitiveType {
@@ -77,6 +80,7 @@ impl ValueType {
             ValueType::Array(prim_type) => 0x10 | prim_type.to_nibble(),
             ValueType::String => 0x20,
             ValueType::StashedObject => 0x30,
+            ValueType::ArrayOfObjects => 0x40,
         }
     }
 
@@ -89,6 +93,7 @@ impl ValueType {
             0x10 => Ok(ValueType::Array(PrimitiveType::from_nibble(lo_nibble)?)),
             0x20 => Ok(ValueType::String),
             0x30 => Ok(ValueType::StashedObject),
+            0x40 => Ok(ValueType::ArrayOfObjects),
             _ => Err(UnstashError::Corrupted),
         }
     }
