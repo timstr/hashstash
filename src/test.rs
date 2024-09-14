@@ -1,9 +1,11 @@
+use std::collections::HashSet;
+
 use crate::{
     test_stash_roundtrip, test_stash_roundtrip_inplace, unstasher::InplaceUnstasher, Stash,
     Stashable, Stasher, UnstashError, Unstashable, UnstashableInplace, Unstasher,
 };
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
 struct StructA {
     i: i32,
     x: u64,
@@ -600,4 +602,56 @@ fn test_roundtrip_vec_of_objects() {
     assert_eq!(test_stash_roundtrip_inplace(create_2, modify_2), Ok(()));
     assert_eq!(test_stash_roundtrip_inplace(create_3, modify_2), Ok(()));
     assert_eq!(test_stash_roundtrip_inplace(create_4, modify_2), Ok(()));
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct StructWithHashSetOfBasicObjects {
+    objects: HashSet<StructA>,
+}
+
+impl Stashable for StructWithHashSetOfBasicObjects {
+    fn stash(&self, stasher: &mut Stasher) {
+        stasher.array_of_objects_iter(self.objects.iter());
+    }
+}
+
+impl Unstashable for StructWithHashSetOfBasicObjects {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
+        Ok(StructWithHashSetOfBasicObjects {
+            objects: unstasher
+                .array_of_objects_iter::<StructA>()?
+                .collect::<Result<HashSet<StructA>, UnstashError>>()?,
+        })
+    }
+}
+
+#[test]
+fn test_hashset_of_basic_objects() {
+    let mut objects = HashSet::new();
+
+    objects.insert(StructA {
+        i: 1,
+        x: 0x202,
+        s: "abc".to_string(),
+    });
+    objects.insert(StructA {
+        i: 2,
+        x: 0x404,
+        s: "defg".to_string(),
+    });
+    objects.insert(StructA {
+        i: 3,
+        x: 0x808,
+        s: "hijkl".to_string(),
+    });
+
+    let s1 = StructWithHashSetOfBasicObjects { objects };
+
+    let stash = Stash::new();
+
+    let handle = stash.stash(&s1);
+
+    let s2 = stash.unstash(&handle).unwrap();
+
+    assert_eq!(s1, s2);
 }

@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::{
-    valuetypes::PrimitiveReadWrite, StashMap, StashedObject, TypeSaltedHash, Unstashable,
+    valuetypes::PrimitiveReadWrite, ObjectHash, StashMap, StashedObject, Unstashable,
     UnstashableInplace, ValueType,
 };
 
@@ -42,7 +42,7 @@ impl<'a, T: PrimitiveReadWrite> ExactSizeIterator for PrimitiveIterator<'a, T> {
 }
 
 pub struct ObjectIterator<'a, T> {
-    hashes: &'a [TypeSaltedHash],
+    hashes: &'a [ObjectHash],
     stashmap: &'a StashMap,
     _phantom_data: PhantomData<T>,
 }
@@ -61,7 +61,7 @@ impl<'a, T: Unstashable> Iterator for ObjectIterator<'a, T> {
 
 pub(crate) struct UnstasherBackend<'a> {
     bytes: &'a [u8],
-    dependencies: &'a [TypeSaltedHash],
+    dependencies: &'a [ObjectHash],
     stashmap: &'a StashMap,
 }
 
@@ -120,7 +120,7 @@ impl<'a> UnstasherBackend<'a> {
         }
     }
 
-    fn read_dependency(&mut self) -> Result<TypeSaltedHash, UnstashError> {
+    fn read_dependency(&mut self) -> Result<ObjectHash, UnstashError> {
         let Some((hash, remaining_hashes)) = self.dependencies.split_first() else {
             return Err(UnstashError::Corrupted);
         };

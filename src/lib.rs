@@ -32,10 +32,10 @@ pub trait UnstashableInplace {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-struct TypeSaltedHash(u64);
+struct ObjectHash(u64);
 
-impl TypeSaltedHash {
-    fn hash_object<T: 'static + Stashable>(object: &T) -> TypeSaltedHash {
+impl ObjectHash {
+    fn hash_object<T: 'static + Stashable>(object: &T) -> ObjectHash {
         let mut hasher = seahash::SeaHasher::new();
 
         TypeId::of::<T>().hash(&mut hasher);
@@ -44,18 +44,18 @@ impl TypeSaltedHash {
 
         object.stash(&mut stasher);
 
-        TypeSaltedHash(hasher.finish())
+        ObjectHash(hasher.finish())
     }
 }
 
 struct StashedObject {
     bytes: Vec<u8>,
     reference_count: Cell<u16>,
-    dependencies: Vec<TypeSaltedHash>,
+    dependencies: Vec<ObjectHash>,
 }
 
 struct StashMap {
-    objects: HashMap<TypeSaltedHash, StashedObject>,
+    objects: HashMap<ObjectHash, StashedObject>,
 }
 
 impl StashMap {
@@ -65,11 +65,8 @@ impl StashMap {
         }
     }
 
-    fn stash_and_add_reference<'a, T: 'static + Stashable>(
-        &'a mut self,
-        object: &T,
-    ) -> TypeSaltedHash {
-        let hash = TypeSaltedHash::hash_object(object);
+    fn stash_and_add_reference<'a, T: 'static + Stashable>(&'a mut self, object: &T) -> ObjectHash {
+        let hash = ObjectHash::hash_object(object);
 
         if let Some(stashed_object) = self.objects.get(&hash) {
             stashed_object
@@ -78,7 +75,7 @@ impl StashMap {
             return hash;
         }
 
-        let mut dependencies = Vec::<TypeSaltedHash>::new();
+        let mut dependencies = Vec::<ObjectHash>::new();
         let mut bytes = Vec::<u8>::new();
 
         let mut stasher = Stasher::new_serializer(&mut bytes, &mut dependencies, self);
@@ -94,14 +91,14 @@ impl StashMap {
         hash
     }
 
-    fn add_reference(&self, hash: TypeSaltedHash) {
+    fn add_reference(&self, hash: ObjectHash) {
         let stashed_object = self.objects.get(&hash).unwrap();
         stashed_object
             .reference_count
             .set(stashed_object.reference_count.get() + 1);
     }
 
-    fn unstash<'a, T: Unstashable>(&self, hash: TypeSaltedHash) -> Result<T, UnstashError> {
+    fn unstash<'a, T: Unstashable>(&self, hash: ObjectHash) -> Result<T, UnstashError> {
         let Some(stashed_object) = self.objects.get(&hash) else {
             // Is this ever possible?
             return Err(UnstashError::NotFound);
@@ -121,7 +118,7 @@ impl StashMap {
 
     fn unstash_inplace<'a, T: UnstashableInplace>(
         &self,
-        hash: TypeSaltedHash,
+        hash: ObjectHash,
         object: &mut T,
         phase: InplaceUnstashPhase,
     ) -> Result<(), UnstashError> {
@@ -144,11 +141,11 @@ impl StashMap {
         Ok(())
     }
 
-    fn remove_reference(&mut self, hash: TypeSaltedHash) {
+    fn remove_reference(&mut self, hash: ObjectHash) {
         fn decrease_refcounts_recursive(
             stashmap: &StashMap,
-            hash: TypeSaltedHash,
-            objects_to_remove: &mut Vec<TypeSaltedHash>,
+            hash: ObjectHash,
+            objects_to_remove: &mut Vec<ObjectHash>,
         ) {
             let object = stashmap.objects.get(&hash).unwrap();
             let mut refcount = object.reference_count.get();
@@ -163,7 +160,7 @@ impl StashMap {
             }
         }
 
-        let mut objects_to_remove: Vec<TypeSaltedHash> = Vec::new();
+        let mut objects_to_remove: Vec<ObjectHash> = Vec::new();
 
         decrease_refcounts_recursive(self, hash, &mut objects_to_remove);
 
@@ -235,7 +232,7 @@ where
 
     modify_object(&mut object);
 
-    let hash_after_modifying = TypeSaltedHash::hash_object(&object);
+    let hash_after_modifying = ObjectHash::hash_object(&object);
 
     if hash_after_modifying == handle_to_original.object_hash() {
         return Err(RoundTripError::SameHashAfterModifying);
@@ -245,7 +242,7 @@ where
         .unstash(&handle_to_original)
         .map_err(|e| RoundTripError::BasicUnstashError(e))?;
 
-    let hash_after_unstashing = TypeSaltedHash::hash_object(&unstashed_object);
+    let hash_after_unstashing = ObjectHash::hash_object(&unstashed_object);
     if hash_after_unstashing != handle_to_original.object_hash() {
         return Err(RoundTripError::NotTheSame);
     }
@@ -268,7 +265,7 @@ where
 
     modify(&mut object);
 
-    let hash_after_modifying = TypeSaltedHash::hash_object(&object);
+    let hash_after_modifying = ObjectHash::hash_object(&object);
     if hash_after_modifying == handle_to_original.object_hash() {
         return Err(RoundTripError::SameHashAfterModifying);
     }
@@ -283,7 +280,7 @@ where
     )
     .map_err(|e| RoundTripError::BasicUnstashError(e))?;
 
-    let hash_after_validation = TypeSaltedHash::hash_object(&object);
+    let hash_after_validation = ObjectHash::hash_object(&object);
     if hash_after_validation != hash_before_validation {
         return Err(RoundTripError::ModifiedDuringValidation);
     }
@@ -295,7 +292,7 @@ where
     )
     .map_err(|e| RoundTripError::UncaughtUnstashError(e))?;
 
-    let hash_after_write = TypeSaltedHash::hash_object(&object);
+    let hash_after_write = ObjectHash::hash_object(&object);
     if hash_after_write != handle_to_original.object_hash() {
         return Err(RoundTripError::NotTheSame);
     }
@@ -305,12 +302,12 @@ where
 
 pub struct StashHandle<T> {
     map: Rc<RefCell<StashMap>>,
-    hash: TypeSaltedHash,
+    hash: ObjectHash,
     _phantom_data: PhantomData<T>,
 }
 
 impl<T> StashHandle<T> {
-    fn new(map: Rc<RefCell<StashMap>>, hash: TypeSaltedHash) -> StashHandle<T> {
+    fn new(map: Rc<RefCell<StashMap>>, hash: ObjectHash) -> StashHandle<T> {
         StashHandle {
             map,
             hash,
@@ -318,7 +315,7 @@ impl<T> StashHandle<T> {
         }
     }
 
-    pub(crate) fn object_hash(&self) -> TypeSaltedHash {
+    pub(crate) fn object_hash(&self) -> ObjectHash {
         self.hash
     }
 

@@ -1,6 +1,6 @@
 use std::hash::Hasher;
 
-use crate::{valuetypes::PrimitiveReadWrite, StashMap, Stashable, TypeSaltedHash, ValueType};
+use crate::{valuetypes::PrimitiveReadWrite, StashMap, Stashable, ObjectHash, ValueType};
 
 struct HashingStasher<'a> {
     hasher: &'a mut seahash::SeaHasher,
@@ -8,7 +8,7 @@ struct HashingStasher<'a> {
 
 struct SerializingStasher<'a> {
     data: &'a mut Vec<u8>,
-    dependencies: &'a mut Vec<TypeSaltedHash>,
+    dependencies: &'a mut Vec<ObjectHash>,
     stashmap: &'a mut StashMap,
 }
 
@@ -30,7 +30,7 @@ impl<'a> StasherBackend<'a> {
     fn stash_dependency<T: 'static + Stashable>(&mut self, object: &T) {
         match self {
             StasherBackend::Hash(hasher) => {
-                let object_hash = TypeSaltedHash::hash_object(object);
+                let object_hash = ObjectHash::hash_object(object);
                 hasher.hasher.write_u64(object_hash.0);
             }
             StasherBackend::Serialize(serializer) => {
@@ -74,7 +74,7 @@ pub struct Stasher<'a> {
 impl<'a> Stasher<'a> {
     pub(crate) fn new_serializer(
         data: &'a mut Vec<u8>,
-        dependencies: &'a mut Vec<TypeSaltedHash>,
+        dependencies: &'a mut Vec<ObjectHash>,
         stashmap: &'a mut StashMap,
     ) -> Stasher<'a> {
         Stasher {
