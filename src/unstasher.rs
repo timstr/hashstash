@@ -16,12 +16,12 @@ pub enum UnstashError {
     NotFound,
 }
 
-pub struct UnstashIterator<'a, T> {
+pub struct PrimitiveIterator<'a, T> {
     data: &'a [u8],
     _phantom_data: PhantomData<T>,
 }
 
-impl<'a, T: PrimitiveReadWrite> Iterator for UnstashIterator<'a, T> {
+impl<'a, T: PrimitiveReadWrite> Iterator for PrimitiveIterator<'a, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -34,10 +34,28 @@ impl<'a, T: PrimitiveReadWrite> Iterator for UnstashIterator<'a, T> {
     }
 }
 
-impl<'a, T: PrimitiveReadWrite> ExactSizeIterator for UnstashIterator<'a, T> {
+impl<'a, T: PrimitiveReadWrite> ExactSizeIterator for PrimitiveIterator<'a, T> {
     fn len(&self) -> usize {
         debug_assert_eq!(self.data.len() % T::SIZE, 0);
         self.data.len() / T::SIZE
+    }
+}
+
+pub struct ObjectIterator<'a, T> {
+    hashes: &'a [TypeSaltedHash],
+    stashmap: &'a StashMap,
+    _phantom_data: PhantomData<T>,
+}
+
+impl<'a, T: Unstashable> Iterator for ObjectIterator<'a, T> {
+    type Item = Result<T, UnstashError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let Some((hash, remaining_hashes)) = self.hashes.split_first() else {
+            return None;
+        };
+        self.hashes = remaining_hashes;
+        Some(self.stashmap.unstash(*hash))
     }
 }
 
@@ -146,29 +164,12 @@ impl<'a> UnstasherBackend<'a> {
     fn read_primitive_array_vec<T: 'static + PrimitiveReadWrite>(
         &mut self,
     ) -> Result<Vec<T>, UnstashError> {
-        self.reset_on_error(|unstasher| {
-            if unstasher.remaining_len() < (u8::SIZE + u32::SIZE) {
-                return Err(UnstashError::OutOfData);
-            }
-            let the_type = ValueType::from_byte(unstasher.read_byte().unwrap())?;
-            if the_type != ValueType::Array(T::TYPE) {
-                return Err(UnstashError::WrongValueType);
-            }
-            let len = u32::read_raw_bytes_from(&mut unstasher.bytes) as usize;
-            if unstasher.remaining_len() < (len * T::SIZE) {
-                return Err(UnstashError::Corrupted);
-            }
-            let mut v = Vec::with_capacity(len);
-            for _ in 0..len {
-                v.push(T::read_raw_bytes_from(&mut unstasher.bytes));
-            }
-            Ok(v)
-        })
+        Ok(self.read_primitive_array_iter()?.collect())
     }
 
     fn read_primitive_array_iter<T: 'static + PrimitiveReadWrite>(
         &mut self,
-    ) -> Result<UnstashIterator<'a, T>, UnstashError> {
+    ) -> Result<PrimitiveIterator<'a, T>, UnstashError> {
         self.reset_on_error(|unstasher| {
             if unstasher.remaining_len() < (u8::SIZE + u32::SIZE) {
                 return Err(UnstashError::OutOfData);
@@ -182,7 +183,7 @@ impl<'a> UnstasherBackend<'a> {
             if unstasher.remaining_len() < num_bytes {
                 return Err(UnstashError::Corrupted);
             }
-            let iterator = UnstashIterator {
+            let iterator = PrimitiveIterator {
                 data: &unstasher.bytes[..num_bytes],
                 _phantom_data: PhantomData,
             };
@@ -194,6 +195,12 @@ impl<'a> UnstasherBackend<'a> {
     fn read_array_of_object_vec<T: 'static + Unstashable>(
         &mut self,
     ) -> Result<Vec<T>, UnstashError> {
+        self.read_array_of_object_iter()?.collect()
+    }
+
+    fn read_array_of_object_iter<T: 'static + Unstashable>(
+        &mut self,
+    ) -> Result<ObjectIterator<T>, UnstashError> {
         self.reset_on_error(|unstasher| {
             if unstasher.remaining_len() < (u8::SIZE + u32::SIZE) {
                 return Err(UnstashError::OutOfData);
@@ -203,15 +210,17 @@ impl<'a> UnstasherBackend<'a> {
                 return Err(UnstashError::WrongValueType);
             }
             let len = u32::read_raw_bytes_from(&mut unstasher.bytes) as usize;
-            if unstasher.dependencies.len() < len {
+            let Some((hashes, remaining_hashes)) = unstasher.dependencies.split_at_checked(len)
+            else {
                 return Err(UnstashError::Corrupted);
-            }
-            let mut v = Vec::with_capacity(len);
-            for _ in 0..len {
-                let hash = unstasher.read_dependency()?;
-                v.push(self.stashmap.unstash(hash)?);
-            }
-            Ok(v)
+            };
+            unstasher.dependencies = remaining_hashes;
+            let iter = ObjectIterator {
+                hashes,
+                stashmap: unstasher.stashmap,
+                _phantom_data: PhantomData,
+            };
+            Ok(iter)
         })
     }
 
@@ -349,102 +358,102 @@ impl<'a> Unstasher<'a> {
     }
 
     /// Read an array of u8 values into a Vec
-    pub fn array_vec_u8(&mut self) -> Result<Vec<u8>, UnstashError> {
+    pub fn array_of_u8_vec(&mut self) -> Result<Vec<u8>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of i8 values into a Vec
-    pub fn array_vec_i8(&mut self) -> Result<Vec<i8>, UnstashError> {
+    pub fn array_of_i8_vec(&mut self) -> Result<Vec<i8>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of u16 values into a Vec
-    pub fn array_vec_u16(&mut self) -> Result<Vec<u16>, UnstashError> {
+    pub fn array_of_u16_vec(&mut self) -> Result<Vec<u16>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of i16 values into a Vec
-    pub fn array_vec_i16(&mut self) -> Result<Vec<i16>, UnstashError> {
+    pub fn array_of_i16_vec(&mut self) -> Result<Vec<i16>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of u32 values into a Vec
-    pub fn array_vec_u32(&mut self) -> Result<Vec<u32>, UnstashError> {
+    pub fn array_of_u32_vec(&mut self) -> Result<Vec<u32>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of i32 values into a Vec
-    pub fn array_vec_i32(&mut self) -> Result<Vec<i32>, UnstashError> {
+    pub fn array_of_i32_vec(&mut self) -> Result<Vec<i32>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of u64 values into a Vec
-    pub fn array_vec_u64(&mut self) -> Result<Vec<u64>, UnstashError> {
+    pub fn array_of_u64_vec(&mut self) -> Result<Vec<u64>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of i64 values into a Vec
-    pub fn array_vec_i64(&mut self) -> Result<Vec<i64>, UnstashError> {
+    pub fn array_of_i64_vec(&mut self) -> Result<Vec<i64>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of f32 values into a Vec
-    pub fn array_vec_f32(&mut self) -> Result<Vec<f32>, UnstashError> {
+    pub fn array_of_f32_vec(&mut self) -> Result<Vec<f32>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of f64 values into a Vec
-    pub fn array_vec_f64(&mut self) -> Result<Vec<f64>, UnstashError> {
+    pub fn array_of_f64_vec(&mut self) -> Result<Vec<f64>, UnstashError> {
         self.backend.read_primitive_array_vec()
     }
 
     /// Read an array of i8 values via an iterator
-    pub fn array_iter_i8(&mut self) -> Result<UnstashIterator<i8>, UnstashError> {
+    pub fn array_of_i8_iter(&mut self) -> Result<PrimitiveIterator<i8>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of u8 values via an iterator
-    pub fn array_iter_u8(&mut self) -> Result<UnstashIterator<u8>, UnstashError> {
+    pub fn array_of_u8_iter(&mut self) -> Result<PrimitiveIterator<u8>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of i16 values via an iterator
-    pub fn array_iter_i16(&mut self) -> Result<UnstashIterator<i16>, UnstashError> {
+    pub fn array_of_i16_iter(&mut self) -> Result<PrimitiveIterator<i16>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of u16 values via an iterator
-    pub fn array_iter_u16(&mut self) -> Result<UnstashIterator<u16>, UnstashError> {
+    pub fn array_of_u16_iter(&mut self) -> Result<PrimitiveIterator<u16>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of i32 values via an iterator
-    pub fn array_iter_i32(&mut self) -> Result<UnstashIterator<i32>, UnstashError> {
+    pub fn array_of_i32_iter(&mut self) -> Result<PrimitiveIterator<i32>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of u32 values via an iterator
-    pub fn array_iter_u32(&mut self) -> Result<UnstashIterator<u32>, UnstashError> {
+    pub fn array_of_u32_iter(&mut self) -> Result<PrimitiveIterator<u32>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of i64 values via an iterator
-    pub fn array_iter_i64(&mut self) -> Result<UnstashIterator<i64>, UnstashError> {
+    pub fn array_of_i64_iter(&mut self) -> Result<PrimitiveIterator<i64>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of u64 values via an iterator
-    pub fn array_iter_u64(&mut self) -> Result<UnstashIterator<u64>, UnstashError> {
+    pub fn array_of_u64_iter(&mut self) -> Result<PrimitiveIterator<u64>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of f32 values via an iterator
-    pub fn array_iter_f32(&mut self) -> Result<UnstashIterator<f32>, UnstashError> {
+    pub fn array_of_f32_iter(&mut self) -> Result<PrimitiveIterator<f32>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of f64 values via an iterator
-    pub fn array_iter_f64(&mut self) -> Result<UnstashIterator<f64>, UnstashError> {
+    pub fn array_of_f64_iter(&mut self) -> Result<PrimitiveIterator<f64>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
@@ -452,6 +461,12 @@ impl<'a> Unstasher<'a> {
         &mut self,
     ) -> Result<Vec<T>, UnstashError> {
         self.backend.read_array_of_object_vec()
+    }
+
+    pub fn array_of_objects_iter<T: 'static + Unstashable>(
+        &mut self,
+    ) -> Result<ObjectIterator<T>, UnstashError> {
+        self.backend.read_array_of_object_iter()
     }
 
     pub fn string(&mut self) -> Result<String, UnstashError> {
@@ -578,56 +593,69 @@ impl<'a> InplaceUnstasher<'a> {
     }
 
     /// Read an array of u8 values into a Vec
-    pub fn array_vec_u8(&mut self, x: &mut Vec<u8>) -> Result<(), UnstashError> {
+    pub fn array_of_u8_vec(&mut self, x: &mut Vec<u8>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of i8 values into a Vec
-    pub fn array_vec_i8(&mut self, x: &mut Vec<i8>) -> Result<(), UnstashError> {
+    pub fn array_of_i8_vec(&mut self, x: &mut Vec<i8>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of u16 values into a Vec
-    pub fn array_vec_u16(&mut self, x: &mut Vec<u16>) -> Result<(), UnstashError> {
+    pub fn array_of_u16_vec(&mut self, x: &mut Vec<u16>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of i16 values into a Vec
-    pub fn array_vec_i16(&mut self, x: &mut Vec<i16>) -> Result<(), UnstashError> {
+    pub fn array_of_i16_vec(&mut self, x: &mut Vec<i16>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of u32 values into a Vec
-    pub fn array_vec_u32(&mut self, x: &mut Vec<u32>) -> Result<(), UnstashError> {
+    pub fn array_of_u32_vec(&mut self, x: &mut Vec<u32>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of i32 values into a Vec
-    pub fn array_vec_i32(&mut self, x: &mut Vec<i32>) -> Result<(), UnstashError> {
+    pub fn array_of_i32_vec(&mut self, x: &mut Vec<i32>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of u64 values into a Vec
-    pub fn array_vec_u64(&mut self, x: &mut Vec<u64>) -> Result<(), UnstashError> {
+    pub fn array_of_u64_vec(&mut self, x: &mut Vec<u64>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of i64 values into a Vec
-    pub fn array_vec_i64(&mut self, x: &mut Vec<i64>) -> Result<(), UnstashError> {
+    pub fn array_of_i64_vec(&mut self, x: &mut Vec<i64>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of f32 values into a Vec
-    pub fn array_vec_f32(&mut self, x: &mut Vec<f32>) -> Result<(), UnstashError> {
+    pub fn array_of_f32_vec(&mut self, x: &mut Vec<f32>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
     /// Read an array of f64 values into a Vec
-    pub fn array_vec_f64(&mut self, x: &mut Vec<f64>) -> Result<(), UnstashError> {
+    pub fn array_of_f64_vec(&mut self, x: &mut Vec<f64>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    // TODO: is there any way to do two-phase in-place unstashing with iterators of unknown count?
+    // TODO: is there any way to do two-phase in-place unstashing with iterators
+    // of unknown count? Slice and vec are cool and useful but an iterator-based
+    // interface will support way more types containers
+
+    pub fn array_of_objects_vec<T: 'static + Unstashable>(
+        &mut self,
+        x: &mut Vec<T>,
+    ) -> Result<(), UnstashError> {
+        let v = self.backend.read_array_of_object_vec()?;
+        if self.phase == InplaceUnstashPhase::Write {
+            *x = v;
+        }
+        Ok(())
+    }
 
     pub fn string(&mut self, x: &mut String) -> Result<(), UnstashError> {
         let s = self.backend.string()?;

@@ -288,7 +288,7 @@ fn test_one_level_nested_struct() {
 }
 
 #[test]
-fn test_roundtrip() {
+fn test_roundtrip_nested() {
     let create_a = || StructA {
         i: 123,
         x: 0x0123456789abcdef,
@@ -362,23 +362,23 @@ struct StructWithVecs {
 
 impl Stashable for StructWithVecs {
     fn stash(&self, stasher: &mut Stasher) {
-        stasher.array_slice_i32(&self.vec_i32);
-        stasher.array_iter_u8(self.vec_u8.iter().cloned());
+        stasher.array_of_i32_slice(&self.vec_i32);
+        stasher.array_of_u8_iter(self.vec_u8.iter().cloned());
     }
 }
 
 impl Unstashable for StructWithVecs {
     fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
-        let vec_i32 = unstasher.array_iter_i32()?.collect();
-        let vec_u8 = unstasher.array_vec_u8()?;
+        let vec_i32 = unstasher.array_of_i32_iter()?.collect();
+        let vec_u8 = unstasher.array_of_u8_vec()?;
         Ok(StructWithVecs { vec_i32, vec_u8 })
     }
 }
 
 impl UnstashableInplace for StructWithVecs {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
-        unstasher.array_vec_i32(&mut self.vec_i32)?;
-        unstasher.array_vec_u8(&mut self.vec_u8)?;
+        unstasher.array_of_i32_vec(&mut self.vec_i32)?;
+        unstasher.array_of_u8_vec(&mut self.vec_u8)?;
         Ok(())
     }
 }
@@ -464,8 +464,15 @@ impl Unstashable for StructWithVecOfObjects {
     }
 }
 
+impl UnstashableInplace for StructWithVecOfObjects {
+    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
+        unstasher.array_of_objects_vec(&mut self.objects)?;
+        Ok(())
+    }
+}
+
 #[test]
-fn test_vec_with_struct_of_objects() {
+fn test_vec_of_objects() {
     let a1 = StructA {
         i: 1,
         x: 0x202,
@@ -526,4 +533,71 @@ fn test_vec_with_struct_of_objects() {
     std::mem::drop(handle_a3);
 
     assert_eq!(stash.num_objects(), 0);
+}
+
+#[test]
+fn test_roundtrip_vec_of_objects() {
+    let a1 = StructA {
+        i: 1,
+        x: 0x202,
+        s: "abc".to_string(),
+    };
+    let a2 = StructA {
+        i: 2,
+        x: 0x404,
+        s: "defg".to_string(),
+    };
+    let a3 = StructA {
+        i: 3,
+        x: 0x808,
+        s: "hijkl".to_string(),
+    };
+
+    let create_1 = || StructWithVecOfObjects { objects: vec![] };
+    let create_2 = || StructWithVecOfObjects {
+        objects: vec![a1.clone()],
+    };
+    let create_3 = || StructWithVecOfObjects {
+        objects: vec![a1.clone(), a2.clone(), a3.clone()],
+    };
+    let create_4 = || StructWithVecOfObjects {
+        objects: vec![
+            a1.clone(),
+            a2.clone(),
+            a2.clone(),
+            a3.clone(),
+            a3.clone(),
+            a3.clone(),
+        ],
+    };
+
+    let modify_1 = |s: &mut StructWithVecOfObjects| {
+        if s.objects.is_empty() {
+            s.objects.push(a1.clone());
+        } else {
+            s.objects.clear();
+        }
+    };
+    let modify_2 = |s: &mut StructWithVecOfObjects| {
+        s.objects.push(a2.clone());
+        s.objects.reverse();
+    };
+
+    assert_eq!(test_stash_roundtrip(create_1, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_4, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_4, modify_2), Ok(()));
+
+    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_4, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_4, modify_2), Ok(()));
 }
