@@ -2,28 +2,42 @@ use std::hash::Hasher;
 
 use crate::{valuetypes::PrimitiveReadWrite, ObjectHash, StashMap, Stashable, ValueType};
 
+/// A [Stasher] backend which hashes the object contents
 struct HashingStasher<'a> {
     hasher: &'a mut seahash::SeaHasher,
     current_unordered_hash: Option<u64>,
 }
 
+/// A [Stasher] backend which serializes the object contents
 struct SerializingStasher<'a> {
     data: &'a mut Vec<u8>,
     dependencies: &'a mut Vec<ObjectHash>,
     stashmap: &'a mut StashMap,
 }
 
+/// The backend implementation of a [Stasher]
 enum StasherBackend<'a> {
     Hash(HashingStasher<'a>),
     Serialize(SerializingStasher<'a>),
 }
 
+/// Whether order matters for an array of stashed objects
 pub enum Order {
+    /// Order matters. Permuting the objects results in
+    /// a different object.
     Ordered,
+
+    /// Order does not matter. Permuting the objects results
+    /// in an equivalent object.
     Unordered,
 }
 
+/// Used when serializing sequences to know where to write
+/// the length prefix after the count is known.
+struct SequenceBookmark(usize);
+
 impl<'a> StasherBackend<'a> {
+    /// Write a slice of raw bytes
     fn write_raw_bytes(&mut self, bytes: &[u8]) {
         match self {
             StasherBackend::Hash(hash) => {
@@ -33,6 +47,9 @@ impl<'a> StasherBackend<'a> {
         }
     }
 
+    /// Stash and track a dependency. When hashing, this simply
+    /// hashes the object. When serializing, this stashes the
+    /// object in the stashmap and adds a reference to it.
     fn stash_dependency<F: FnMut(&mut Stasher)>(&mut self, f: F) {
         match self {
             StasherBackend::Hash(hasher) => {
@@ -49,13 +66,20 @@ impl<'a> StasherBackend<'a> {
         }
     }
 
-    fn begin_sequence(&mut self, ordering: Order) -> usize {
+    /// Start a sequence of objects. When hashing, this
+    /// instructs the hasher whether to combine hashes of
+    /// subsequent objects in an order-sensitive or order-
+    /// insensitive manner. When serializing, this makes
+    /// space to store a prefixed length.
+    fn begin_sequence(&mut self, ordering: Order) -> SequenceBookmark {
         match self {
             StasherBackend::Hash(hasher) => {
                 if let Order::Unordered = ordering {
                     hasher.current_unordered_hash = Some(0);
                 }
-                usize::MAX
+
+                // This will not be used
+                SequenceBookmark(usize::MAX)
             }
             StasherBackend::Serialize(serializer) => {
                 let bookmark = serializer.data.len();
@@ -63,12 +87,17 @@ impl<'a> StasherBackend<'a> {
                 for b in placeholder_length.to_be_bytes() {
                     serializer.data.push(b);
                 }
-                bookmark
+
+                // Where to write the length prefix later
+                SequenceBookmark(bookmark)
             }
         }
     }
 
-    fn end_sequence(&mut self, bookmark: usize, length: u32) {
+    /// Complete a sequence of objects. When hashing, this
+    /// simply hashes the length. When serializing, this
+    /// writes the length at the previously bookmarked location.
+    fn end_sequence(&mut self, bookmark: SequenceBookmark, length: u32) {
         match self {
             StasherBackend::Hash(hasher) => {
                 if let Some(hash) = hasher.current_unordered_hash.take() {
@@ -78,19 +107,23 @@ impl<'a> StasherBackend<'a> {
             }
             StasherBackend::Serialize(serializer) => {
                 for (i, b) in length.to_be_bytes().into_iter().enumerate() {
-                    serializer.data[bookmark + i] = b;
+                    serializer.data[bookmark.0 + i] = b;
                 }
             }
         }
     }
 }
 
+/// A stasher is used to visit the contents of an object as part of its
+/// [crate::Unstashable::unstash] implementation, interchangeably to
+/// hash and to serialize those contents.
 pub struct Stasher<'a> {
     backend: StasherBackend<'a>,
 }
 
 /// Private methods
 impl<'a> Stasher<'a> {
+    /// Create a new Stasher for serializing
     pub(crate) fn new_serializer(
         data: &'a mut Vec<u8>,
         dependencies: &'a mut Vec<ObjectHash>,
@@ -105,6 +138,7 @@ impl<'a> Stasher<'a> {
         }
     }
 
+    /// Create a new Stasher for hashing
     pub(crate) fn new_hasher(hasher: &'a mut seahash::SeaHasher) -> Stasher<'a> {
         Stasher {
             backend: StasherBackend::Hash(HashingStasher {
@@ -114,11 +148,12 @@ impl<'a> Stasher<'a> {
         }
     }
 
+    /// Write a sequence of raw bytes
     pub(crate) fn write_raw_bytes(&mut self, bytes: &[u8]) {
         self.backend.write_raw_bytes(bytes);
     }
 
-    /// Helper method to write a primitive
+    /// Helper method to write a single primitive
     fn write_primitive<T: PrimitiveReadWrite>(&mut self, x: T) {
         self.write_raw_bytes(&[ValueType::Primitive(T::TYPE).to_byte()]);
         x.write_raw_bytes_to(self);
@@ -295,10 +330,28 @@ impl<'a> Stasher<'a> {
         self.write_primitive_array(it);
     }
 
+    /// Write a single [Stashable] object
+    pub fn object<T: Stashable>(&mut self, object: &T) {
+        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
+        self.backend
+            .stash_dependency(|stasher| object.stash(stasher));
+    }
+
+    /// Write a single object via a function receiving a [Stasher].
+    pub fn object_proxy<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut Stasher),
+    {
+        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
+        self.backend.stash_dependency(f);
+    }
+
+    /// Write an array of [Stashable] objects from a slice
     pub fn array_of_objects_slice<T: Stashable>(&mut self, objects: &[T], order: Order) {
         self.array_of_objects_iter(objects.iter(), order);
     }
 
+    /// Write an array of [Stashable] objects from an iterator
     pub fn array_of_objects_iter<'b, T: 'b + Stashable, I: Iterator<Item = &'b T>>(
         &mut self,
         it: I,
@@ -316,6 +369,8 @@ impl<'a> Stasher<'a> {
         self.backend.end_sequence(bookmark, length);
     }
 
+    /// Write an array of objects from an intermediate iterator and function
+    /// which stashes each item's contents.
     pub fn array_of_proxy_objects<T, I: Iterator<Item = T>, F>(
         &mut self,
         it: I,
@@ -336,26 +391,12 @@ impl<'a> Stasher<'a> {
         self.backend.end_sequence(bookmark, length);
     }
 
-    /// Write a string
+    /// Write a single string
     pub fn string(&mut self, x: &str) {
         self.backend.write_raw_bytes(&[ValueType::String.to_byte()]);
         let bookmark = self.backend.begin_sequence(Order::Ordered);
         let bytes = x.as_bytes();
         self.write_raw_bytes(bytes);
         self.backend.end_sequence(bookmark, bytes.len() as u32);
-    }
-
-    pub fn object<T: Stashable>(&mut self, object: &T) {
-        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        self.backend
-            .stash_dependency(|stasher| object.stash(stasher));
-    }
-
-    pub fn object_proxy<F>(&mut self, f: F)
-    where
-        F: FnMut(&mut Stasher),
-    {
-        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        self.backend.stash_dependency(f);
     }
 }
