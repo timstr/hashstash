@@ -1,5 +1,4 @@
 use std::{
-    any::TypeId,
     cell::{Cell, RefCell},
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -20,42 +19,66 @@ pub use valuetypes::{PrimitiveType, ValueType};
 
 use unstasher::UnstasherBackend;
 
+/// Trait for hashing and serializing an object
 pub trait Stashable {
+    /// Stash the object. The given Stasher may hash or serialize
+    /// the data it's given, but this is transparent to the user.
+    ///
+    /// During typical use, this method is called twice, once to
+    /// hash the object's contents and find a matching stashed
+    /// object, and a second time to serialize the same contents
+    /// to create a new stashed object if no match yet exists.
     fn stash(&self, stasher: &mut Stasher);
 }
 
+/// Trait for objects that can be unstashed or deserialized by
+/// creating a new object.
 pub trait Unstashable: Sized {
+    /// Unstash/deserialize a new object.
+    /// This method is called only once per object being unstashed.
+    ///
+    /// Consider using [test_stash_roundtrip] to test whether
+    /// this method and the corresponding [Stashable] implementation
+    /// are behaving correctly.
     fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError>;
 }
 
+/// Trait for objects that can be unstashed or deserialized by
+/// modifying an existing object.
 pub trait UnstashableInplace {
+    /// Unstash/deserialize an existing object, either validating
+    /// the data being unstashed without making changes to the
+    /// object, OR reading the same data and writing it to the object.
+    ///
+    /// This method is called in two phases. The first is the validation
+    /// phase, in which contents are unstashed without being written
+    /// to the object, as a sort of practice run to detect errors.
+    /// The second phase is the write phase, in which the same contents
+    /// are unstashed a second time but actually written to the object.
+    ///
+    /// This two-phase approach allows unstashing errors to be caught
+    /// without leaving an object in a partially-modified state. While
+    /// it may seem subtle and confusing, nearly all methods of
+    /// [InplaceUnstasher] handle this transparently.
+    ///
+    /// Consider using [test_stash_roundtrip_inplace] to test whether
+    /// this method and the corresponding [Stashable] implementation
+    /// are behaving correctly.
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError>;
 }
 
+/// A small and fixed-size summary of the contents to an object,
+/// such that changes to an object result in a different ObjectHash.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 struct ObjectHash(u64);
 
-fn typeid_of_anonymous_static_argument<T: 'static>(_: T) -> TypeId {
-    TypeId::of::<T>()
-}
-
-fn make_other_unique_typeid_for_non_static<T>(_: T) -> TypeId {
-    typeid_of_anonymous_static_argument(|| {
-        let _: T = unreachable!();
-    })
-}
-
 impl ObjectHash {
-    fn hash_object<T: Stashable>(object: &T) -> ObjectHash {
-        Self::hash_object_proxy(|stasher| object.stash(stasher))
+    fn from_stashable<T: Stashable>(object: &T) -> ObjectHash {
+        Self::with_stasher(|stasher| object.stash(stasher))
     }
 
-    fn hash_object_proxy<F: FnMut(&mut Stasher)>(mut f: F) -> ObjectHash {
+    fn with_stasher<F: FnMut(&mut Stasher)>(mut f: F) -> ObjectHash {
         let mut hasher = seahash::SeaHasher::new();
-
-        let unique_typeid = make_other_unique_typeid_for_non_static(&f);
-
-        unique_typeid.hash(&mut hasher);
 
         let mut stasher = Stasher::new_hasher(&mut hasher);
 
@@ -65,28 +88,30 @@ impl ObjectHash {
     }
 }
 
+/// The serialized contents of an object and the hashes of the objects
+/// it depends on, intended to be stored in a [StashMap]
 struct StashedObject {
     bytes: Vec<u8>,
     reference_count: Cell<u16>,
     dependencies: Vec<ObjectHash>,
 }
 
+/// A container storing stashed objects by the hashes of their contents
 struct StashMap {
     objects: HashMap<ObjectHash, StashedObject>,
 }
 
 impl StashMap {
+    /// Create a new empty StashMap
     fn new() -> StashMap {
         StashMap {
             objects: HashMap::new(),
         }
     }
 
-    fn stash_and_add_reference<F: FnMut(&mut Stasher)>(
-        &mut self,
-        hash: ObjectHash,
-        mut f: F,
-    ) -> ObjectHash {
+    fn stash_and_add_reference<F: FnMut(&mut Stasher)>(&mut self, mut f: F) -> ObjectHash {
+        let hash = ObjectHash::with_stasher(&mut f);
+
         if let Some(stashed_object) = self.objects.get(&hash) {
             stashed_object
                 .reference_count
@@ -212,8 +237,7 @@ impl Stash {
 
     pub fn stash<T: Stashable>(&self, object: &T) -> StashHandle<T> {
         let mut stashmap = self.map.borrow_mut();
-        let hash = ObjectHash::hash_object(object);
-        stashmap.stash_and_add_reference(hash, |stasher| object.stash(stasher));
+        let hash = stashmap.stash_and_add_reference(|stasher| object.stash(stasher));
         StashHandle::new(Rc::clone(&self.map), hash)
     }
 
@@ -256,7 +280,7 @@ where
 
     modify_object(&mut object);
 
-    let hash_after_modifying = ObjectHash::hash_object(&object);
+    let hash_after_modifying = ObjectHash::from_stashable(&object);
 
     if hash_after_modifying == handle_to_original.object_hash() {
         return Err(RoundTripError::SameHashAfterModifying);
@@ -266,7 +290,7 @@ where
         .unstash(&handle_to_original)
         .map_err(|e| RoundTripError::BasicUnstashError(e))?;
 
-    let hash_after_unstashing = ObjectHash::hash_object(&unstashed_object);
+    let hash_after_unstashing = ObjectHash::from_stashable(&unstashed_object);
     if hash_after_unstashing != handle_to_original.object_hash() {
         return Err(RoundTripError::DifferentHashAfterUnstashing);
     }
@@ -289,7 +313,7 @@ where
 
     modify(&mut object);
 
-    let hash_after_modifying = ObjectHash::hash_object(&object);
+    let hash_after_modifying = ObjectHash::from_stashable(&object);
     if hash_after_modifying == handle_to_original.object_hash() {
         return Err(RoundTripError::SameHashAfterModifying);
     }
@@ -304,7 +328,7 @@ where
     )
     .map_err(|e| RoundTripError::BasicUnstashError(e))?;
 
-    let hash_after_validation = ObjectHash::hash_object(&object);
+    let hash_after_validation = ObjectHash::from_stashable(&object);
     if hash_after_validation != hash_before_validation {
         return Err(RoundTripError::ModifiedDuringValidation);
     }
@@ -316,7 +340,7 @@ where
     )
     .map_err(|e| RoundTripError::UncaughtUnstashError(e))?;
 
-    let hash_after_write = ObjectHash::hash_object(&object);
+    let hash_after_write = ObjectHash::from_stashable(&object);
     if hash_after_write != handle_to_original.object_hash() {
         return Err(RoundTripError::DifferentHashAfterUnstashing);
     }

@@ -33,14 +33,17 @@ impl<'a> StasherBackend<'a> {
         }
     }
 
-    fn stash_dependency<F: FnMut(&mut Stasher)>(&mut self, hash: ObjectHash, f: F) {
+    fn stash_dependency<F: FnMut(&mut Stasher)>(&mut self, f: F) {
         match self {
-            StasherBackend::Hash(hasher) => match hasher.current_unordered_hash.as_mut() {
-                Some(unorderd_hash) => *unorderd_hash ^= hash.0,
-                None => hasher.hasher.write_u64(hash.0),
-            },
+            StasherBackend::Hash(hasher) => {
+                let hash = ObjectHash::with_stasher(f);
+                match hasher.current_unordered_hash.as_mut() {
+                    Some(unorderd_hash) => *unorderd_hash ^= hash.0,
+                    None => hasher.hasher.write_u64(hash.0),
+                }
+            }
             StasherBackend::Serialize(serializer) => {
-                serializer.stashmap.stash_and_add_reference(hash, f);
+                let hash = serializer.stashmap.stash_and_add_reference(f);
                 serializer.dependencies.push(hash);
             }
         }
@@ -306,9 +309,8 @@ impl<'a> Stasher<'a> {
         let bookmark = self.backend.begin_sequence(order);
         let mut length: u32 = 0;
         for object in it {
-            let hash = ObjectHash::hash_object(object);
             self.backend
-                .stash_dependency(hash, |stasher| object.stash(stasher));
+                .stash_dependency(|stasher| object.stash(stasher));
             length += 1;
         }
         self.backend.end_sequence(bookmark, length);
@@ -327,9 +329,8 @@ impl<'a> Stasher<'a> {
         let bookmark = self.backend.begin_sequence(order);
         let mut length: u32 = 0;
         for object in it {
-            let mut stash_this_object = |stasher: &mut Stasher| f(&object, stasher);
-            let hash = ObjectHash::hash_object_proxy(&mut stash_this_object);
-            self.backend.stash_dependency(hash, stash_this_object);
+            self.backend
+                .stash_dependency(|stasher: &mut Stasher| f(&object, stasher));
             length += 1;
         }
         self.backend.end_sequence(bookmark, length);
@@ -346,17 +347,15 @@ impl<'a> Stasher<'a> {
 
     pub fn object<T: Stashable>(&mut self, object: &T) {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        let hash = ObjectHash::hash_object(object);
         self.backend
-            .stash_dependency(hash, |stasher| object.stash(stasher));
+            .stash_dependency(|stasher| object.stash(stasher));
     }
 
-    pub fn object_proxy<F>(&mut self, mut f: F)
+    pub fn object_proxy<F>(&mut self, f: F)
     where
         F: FnMut(&mut Stasher),
     {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        let hash = ObjectHash::hash_object_proxy(&mut f);
-        self.backend.stash_dependency(hash, f);
+        self.backend.stash_dependency(f);
     }
 }
