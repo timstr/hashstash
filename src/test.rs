@@ -917,6 +917,20 @@ struct GraphNode {
     inputs: Vec<i32>,
 }
 
+impl GraphNode {
+    fn new(id: i32, data: Vec<u8>) -> GraphNode {
+        GraphNode {
+            id,
+            data,
+            inputs: Vec::new(),
+        }
+    }
+
+    fn set_data(&mut self, data: Vec<u8>) {
+        self.data = data;
+    }
+}
+
 struct Graph {
     nodes: HashMap<i32, GraphNode>,
 }
@@ -929,18 +943,27 @@ impl Graph {
     }
 
     fn add_node(&mut self, id: i32, data: Vec<u8>) {
-        self.nodes.insert(
-            id,
-            GraphNode {
-                id,
-                data,
-                inputs: Vec::new(),
-            },
-        );
+        self.nodes.insert(id, GraphNode::new(id, data));
+    }
+
+    fn remove_node(&mut self, id: i32) {
+        self.nodes.remove(&id).unwrap();
+    }
+
+    fn node_mut(&mut self, id: i32) -> Option<&mut GraphNode> {
+        self.nodes.get_mut(&id)
     }
 
     fn connect_nodes(&mut self, src: i32, dst: i32) {
         self.nodes.get_mut(&src).unwrap().inputs.push(dst);
+    }
+
+    fn disconnect_node(&mut self, id: i32) {
+        self.nodes.get_mut(&id).unwrap().inputs.clear();
+    }
+
+    fn node_ids(&self) -> Vec<i32> {
+        self.nodes.keys().cloned().collect()
     }
 }
 
@@ -1004,6 +1027,63 @@ impl Unstashable for Graph {
     }
 }
 
+impl UnstashableInplace for Graph {
+    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
+        let phase = unstasher.phase();
+
+        let mut node_ids_to_keep = Vec::<i32>::new();
+
+        unstasher.array_of_proxy_objects(|u| {
+            let id = u.i32()?;
+            let data = u.array_of_u8_vec()?;
+
+            if phase == InplaceUnstashPhase::Write {
+                if let Some(node) = self.node_mut(id) {
+                    // Preserve existing nodes with matching ids
+                    node.set_data(data);
+                } else {
+                    // Add new nodes as needed
+                    self.add_node(id, data);
+                }
+
+                node_ids_to_keep.push(id);
+            }
+
+            Ok(())
+        })?;
+
+        // Remove unreferenced nodes
+        if phase == InplaceUnstashPhase::Write {
+            for id in self.node_ids() {
+                if !node_ids_to_keep.contains(&id) {
+                    self.remove_node(id);
+                }
+            }
+        }
+
+        // Clear all connections
+        if phase == InplaceUnstashPhase::Write {
+            for id in self.node_ids() {
+                self.disconnect_node(id);
+            }
+        }
+
+        // Add back unstashed connections
+        unstasher.array_of_proxy_objects(|u| {
+            let src = u.i32()?;
+            let dst = u.i32()?;
+
+            if phase == InplaceUnstashPhase::Write {
+                self.connect_nodes(src, dst);
+            }
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+}
+
 #[test]
 fn test_graph_roundtrip() {
     let create_1 = || Graph::new();
@@ -1040,4 +1120,11 @@ fn test_graph_roundtrip() {
     assert_eq!(test_stash_roundtrip(create_1, modify_2), Ok(()));
     assert_eq!(test_stash_roundtrip(create_2, modify_2), Ok(()));
     assert_eq!(test_stash_roundtrip(create_3, modify_2), Ok(()));
+
+    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_1), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_2), Ok(()));
 }
