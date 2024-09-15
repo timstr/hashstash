@@ -55,7 +55,7 @@ impl<'a, T: Unstashable> Iterator for ObjectIterator<'a, T> {
             return None;
         };
         self.hashes = remaining_hashes;
-        Some(self.stashmap.unstash(*hash))
+        Some(self.stashmap.unstash(*hash, T::unstash))
     }
 }
 
@@ -224,17 +224,32 @@ impl<'a> UnstasherBackend<'a> {
         })
     }
 
-    fn unstash<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
+    fn read_array_of_object_proxies<F: FnMut(&mut Unstasher) -> Result<(), UnstashError>>(
+        &mut self,
+        mut f: F,
+    ) -> Result<(), UnstashError> {
         self.reset_on_error(|unstasher| {
-            if ValueType::from_byte(unstasher.read_byte()?)? != ValueType::StashedObject {
+            if unstasher.remaining_len() < (u8::SIZE + u32::SIZE) {
+                return Err(UnstashError::OutOfData);
+            }
+            let the_type = ValueType::from_byte(unstasher.read_byte().unwrap())?;
+            if the_type != ValueType::ArrayOfObjects {
                 return Err(UnstashError::WrongValueType);
             }
-            let hash = unstasher.read_dependency()?;
-            unstasher.stashmap.unstash::<T>(hash)
+            let len = u32::read_raw_bytes_from(&mut unstasher.bytes) as usize;
+            let Some((hashes, remaining_hashes)) = unstasher.dependencies.split_at_checked(len)
+            else {
+                return Err(UnstashError::Corrupted);
+            };
+            unstasher.dependencies = remaining_hashes;
+            for hash in hashes {
+                unstasher.stashmap.unstash(*hash, &mut f)?;
+            }
+            Ok(())
         })
     }
 
-    fn unstash_inplace<T: 'static + UnstashableInplace>(
+    fn unstash_inplace<T: UnstashableInplace>(
         &mut self,
         object: &mut T,
         phase: InplaceUnstashPhase,
@@ -245,6 +260,19 @@ impl<'a> UnstasherBackend<'a> {
             }
             let hash = unstasher.read_dependency()?;
             unstasher.stashmap.unstash_inplace(hash, object, phase)
+        })
+    }
+
+    fn object_proxy<R: 'static, F>(&mut self, f: F) -> Result<R, UnstashError>
+    where
+        F: FnMut(&mut Unstasher) -> Result<R, UnstashError>,
+    {
+        self.reset_on_error(|unstasher| {
+            if ValueType::from_byte(unstasher.read_byte()?)? != ValueType::StashedObject {
+                return Err(UnstashError::WrongValueType);
+            }
+            let hash = unstasher.read_dependency()?;
+            unstasher.stashmap.unstash(hash, f)
         })
     }
 
@@ -469,12 +497,26 @@ impl<'a> Unstasher<'a> {
         self.backend.read_array_of_object_iter()
     }
 
+    pub fn array_of_proxy_objects<F>(&mut self, f: F) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut Unstasher) -> Result<(), UnstashError>,
+    {
+        self.backend.read_array_of_object_proxies(f)
+    }
+
     pub fn string(&mut self) -> Result<String, UnstashError> {
         self.backend.string()
     }
 
-    pub fn unstash<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
-        self.backend.unstash()
+    pub fn object<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
+        self.backend.object_proxy(T::unstash)
+    }
+
+    pub fn object_proxy<T: 'static, F>(&mut self, f: F) -> Result<T, UnstashError>
+    where
+        F: FnMut(&mut Unstasher) -> Result<T, UnstashError>,
+    {
+        self.backend.object_proxy(f)
     }
 
     pub fn peek_type(&self) -> Result<ValueType, UnstashError> {
@@ -491,7 +533,7 @@ impl<'a> Unstasher<'a> {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) enum InplaceUnstashPhase {
+pub enum InplaceUnstashPhase {
     Validate,
     Write,
 }
@@ -642,10 +684,6 @@ impl<'a> InplaceUnstasher<'a> {
         self.read_primitive_array_vec(x)
     }
 
-    // TODO: is there any way to do two-phase in-place unstashing with iterators
-    // of unknown count? Slice and vec are cool and useful but an iterator-based
-    // interface will support way more types containers
-
     pub fn array_of_objects_vec<T: 'static + Unstashable>(
         &mut self,
         x: &mut Vec<T>,
@@ -657,6 +695,13 @@ impl<'a> InplaceUnstasher<'a> {
         Ok(())
     }
 
+    pub fn array_of_proxy_objects<F>(&mut self, f: F) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut Unstasher) -> Result<(), UnstashError>,
+    {
+        self.backend.read_array_of_object_proxies(f)
+    }
+
     pub fn string(&mut self, x: &mut String) -> Result<(), UnstashError> {
         let s = self.backend.string()?;
         if self.phase == InplaceUnstashPhase::Write {
@@ -665,22 +710,30 @@ impl<'a> InplaceUnstasher<'a> {
         Ok(())
     }
 
-    pub fn unstash<T: 'static + Unstashable>(
-        &mut self,
-        object: &mut T,
-    ) -> Result<(), UnstashError> {
-        let other_object = self.backend.unstash()?;
+    pub fn object<T: 'static + Unstashable>(&mut self, object: &mut T) -> Result<(), UnstashError> {
+        let other_object = self.backend.object_proxy(T::unstash)?;
         if self.phase == InplaceUnstashPhase::Write {
             *object = other_object;
         }
         Ok(())
     }
 
-    pub fn unstash_inplace<T: 'static + UnstashableInplace>(
+    pub fn object_inplace<T: UnstashableInplace>(
         &mut self,
         object: &mut T,
     ) -> Result<(), UnstashError> {
         self.backend.unstash_inplace(object, self.phase)
+    }
+
+    pub fn object_proxy<R: 'static, F>(&mut self, f: F) -> Result<R, UnstashError>
+    where
+        F: FnMut(&mut Unstasher) -> Result<R, UnstashError>,
+    {
+        self.backend.object_proxy(f)
+    }
+
+    pub fn phase(&self) -> InplaceUnstashPhase {
+        self.phase
     }
 
     pub fn peek_type(&self) -> Result<ValueType, UnstashError> {

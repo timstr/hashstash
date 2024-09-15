@@ -14,10 +14,11 @@ mod valuetypes;
 #[cfg(test)]
 mod test;
 
-pub use stasher::Stasher;
-use unstasher::{InplaceUnstashPhase, InplaceUnstasher, UnstasherBackend};
-pub use unstasher::{UnstashError, Unstasher};
+pub use stasher::{Order, Stasher};
+pub use unstasher::{InplaceUnstashPhase, InplaceUnstasher, UnstashError, Unstasher};
 pub use valuetypes::{PrimitiveType, ValueType};
+
+use unstasher::UnstasherBackend;
 
 pub trait Stashable {
     fn stash(&self, stasher: &mut Stasher);
@@ -34,15 +35,31 @@ pub trait UnstashableInplace {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 struct ObjectHash(u64);
 
+fn typeid_of_anonymous_static_argument<T: 'static>(_: T) -> TypeId {
+    TypeId::of::<T>()
+}
+
+fn make_other_unique_typeid_for_non_static<T>(_: T) -> TypeId {
+    typeid_of_anonymous_static_argument(|| {
+        let _: T = unreachable!();
+    })
+}
+
 impl ObjectHash {
-    fn hash_object<T: 'static + Stashable>(object: &T) -> ObjectHash {
+    fn hash_object<T: Stashable>(object: &T) -> ObjectHash {
+        Self::hash_object_proxy(|stasher| object.stash(stasher))
+    }
+
+    fn hash_object_proxy<F: FnMut(&mut Stasher)>(mut f: F) -> ObjectHash {
         let mut hasher = seahash::SeaHasher::new();
 
-        TypeId::of::<T>().hash(&mut hasher);
+        let unique_typeid = make_other_unique_typeid_for_non_static(&f);
+
+        unique_typeid.hash(&mut hasher);
 
         let mut stasher = Stasher::new_hasher(&mut hasher);
 
-        object.stash(&mut stasher);
+        f(&mut stasher);
 
         ObjectHash(hasher.finish())
     }
@@ -65,9 +82,11 @@ impl StashMap {
         }
     }
 
-    fn stash_and_add_reference<'a, T: 'static + Stashable>(&'a mut self, object: &T) -> ObjectHash {
-        let hash = ObjectHash::hash_object(object);
-
+    fn stash_and_add_reference<F: FnMut(&mut Stasher)>(
+        &mut self,
+        hash: ObjectHash,
+        mut f: F,
+    ) -> ObjectHash {
         if let Some(stashed_object) = self.objects.get(&hash) {
             stashed_object
                 .reference_count
@@ -80,7 +99,7 @@ impl StashMap {
 
         let mut stasher = Stasher::new_serializer(&mut bytes, &mut dependencies, self);
 
-        object.stash(&mut stasher);
+        f(&mut stasher);
 
         let stashed_object = StashedObject {
             bytes,
@@ -98,7 +117,11 @@ impl StashMap {
             .set(stashed_object.reference_count.get() + 1);
     }
 
-    fn unstash<'a, T: Unstashable>(&self, hash: ObjectHash) -> Result<T, UnstashError> {
+    fn unstash<'a, R, F: FnMut(&mut Unstasher) -> Result<R, UnstashError>>(
+        &self,
+        hash: ObjectHash,
+        mut f: F,
+    ) -> Result<R, UnstashError> {
         let Some(stashed_object) = self.objects.get(&hash) else {
             // Is this ever possible?
             return Err(UnstashError::NotFound);
@@ -107,13 +130,13 @@ impl StashMap {
         let mut stash_out =
             Unstasher::new(UnstasherBackend::from_stashed_object(stashed_object, self));
 
-        let object = T::unstash(&mut stash_out)?;
+        let result = f(&mut stash_out)?;
 
         if !stash_out.backend().is_finished() {
             return Err(UnstashError::NotFinished);
         }
 
-        Ok(object)
+        Ok(result)
     }
 
     fn unstash_inplace<'a, T: UnstashableInplace>(
@@ -187,14 +210,15 @@ impl Stash {
         self.map.borrow().objects.len()
     }
 
-    pub fn stash<T: 'static + Stashable>(&self, object: &T) -> StashHandle<T> {
+    pub fn stash<T: Stashable>(&self, object: &T) -> StashHandle<T> {
         let mut stashmap = self.map.borrow_mut();
-        let hash = stashmap.stash_and_add_reference(object);
+        let hash = ObjectHash::hash_object(object);
+        stashmap.stash_and_add_reference(hash, |stasher| object.stash(stasher));
         StashHandle::new(Rc::clone(&self.map), hash)
     }
 
     pub fn unstash<T: Unstashable>(&self, handle: &StashHandle<T>) -> Result<T, UnstashError> {
-        self.map.borrow().unstash(handle.hash)
+        self.map.borrow().unstash(handle.hash, T::unstash)
     }
 
     pub fn unstash_inplace<T: UnstashableInplace>(
@@ -212,12 +236,12 @@ impl Stash {
 pub enum RoundTripError {
     BasicUnstashError(UnstashError),
     UncaughtUnstashError(UnstashError),
-    NotTheSame,
+    DifferentHashAfterUnstashing,
     ModifiedDuringValidation,
     SameHashAfterModifying,
 }
 
-pub fn test_stash_roundtrip<T: 'static + Stashable + Unstashable, Create, Modify>(
+pub fn test_stash_roundtrip<T: Stashable + Unstashable, Create, Modify>(
     mut create: Create,
     mut modify_object: Modify,
 ) -> Result<(), RoundTripError>
@@ -244,13 +268,13 @@ where
 
     let hash_after_unstashing = ObjectHash::hash_object(&unstashed_object);
     if hash_after_unstashing != handle_to_original.object_hash() {
-        return Err(RoundTripError::NotTheSame);
+        return Err(RoundTripError::DifferentHashAfterUnstashing);
     }
 
     Ok(())
 }
 
-pub fn test_stash_roundtrip_inplace<T: 'static + Stashable + UnstashableInplace, Create, Modify>(
+pub fn test_stash_roundtrip_inplace<T: Stashable + UnstashableInplace, Create, Modify>(
     mut create: Create,
     mut modify: Modify,
 ) -> Result<(), RoundTripError>
@@ -294,7 +318,7 @@ where
 
     let hash_after_write = ObjectHash::hash_object(&object);
     if hash_after_write != handle_to_original.object_hash() {
-        return Err(RoundTripError::NotTheSame);
+        return Err(RoundTripError::DifferentHashAfterUnstashing);
     }
 
     Ok(())

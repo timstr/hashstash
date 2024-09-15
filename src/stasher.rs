@@ -1,9 +1,10 @@
 use std::hash::Hasher;
 
-use crate::{valuetypes::PrimitiveReadWrite, StashMap, Stashable, ObjectHash, ValueType};
+use crate::{valuetypes::PrimitiveReadWrite, ObjectHash, StashMap, Stashable, ValueType};
 
 struct HashingStasher<'a> {
     hasher: &'a mut seahash::SeaHasher,
+    current_unordered_hash: Option<u64>,
 }
 
 struct SerializingStasher<'a> {
@@ -17,6 +18,11 @@ enum StasherBackend<'a> {
     Serialize(SerializingStasher<'a>),
 }
 
+pub enum Order {
+    Ordered,
+    Unordered,
+}
+
 impl<'a> StasherBackend<'a> {
     fn write_raw_bytes(&mut self, bytes: &[u8]) {
         match self {
@@ -27,22 +33,27 @@ impl<'a> StasherBackend<'a> {
         }
     }
 
-    fn stash_dependency<T: 'static + Stashable>(&mut self, object: &T) {
+    fn stash_dependency<F: FnMut(&mut Stasher)>(&mut self, hash: ObjectHash, f: F) {
         match self {
-            StasherBackend::Hash(hasher) => {
-                let object_hash = ObjectHash::hash_object(object);
-                hasher.hasher.write_u64(object_hash.0);
-            }
+            StasherBackend::Hash(hasher) => match hasher.current_unordered_hash.as_mut() {
+                Some(unorderd_hash) => *unorderd_hash ^= hash.0,
+                None => hasher.hasher.write_u64(hash.0),
+            },
             StasherBackend::Serialize(serializer) => {
-                let hash = serializer.stashmap.stash_and_add_reference(object);
+                serializer.stashmap.stash_and_add_reference(hash, f);
                 serializer.dependencies.push(hash);
             }
         }
     }
 
-    fn bookmark_length_prefix(&mut self) -> usize {
+    fn begin_sequence(&mut self, ordering: Order) -> usize {
         match self {
-            StasherBackend::Hash(_) => usize::MAX,
+            StasherBackend::Hash(hasher) => {
+                if let Order::Unordered = ordering {
+                    hasher.current_unordered_hash = Some(0);
+                }
+                usize::MAX
+            }
             StasherBackend::Serialize(serializer) => {
                 let bookmark = serializer.data.len();
                 let placeholder_length: u32 = 0;
@@ -54,9 +65,14 @@ impl<'a> StasherBackend<'a> {
         }
     }
 
-    fn write_length_prefix(&mut self, bookmark: usize, length: u32) {
+    fn end_sequence(&mut self, bookmark: usize, length: u32) {
         match self {
-            StasherBackend::Hash(hasher) => hasher.hasher.write_u32(length),
+            StasherBackend::Hash(hasher) => {
+                if let Some(hash) = hasher.current_unordered_hash.take() {
+                    hasher.hasher.write_u64(hash);
+                }
+                hasher.hasher.write_u32(length)
+            }
             StasherBackend::Serialize(serializer) => {
                 for (i, b) in length.to_be_bytes().into_iter().enumerate() {
                     serializer.data[bookmark + i] = b;
@@ -88,7 +104,10 @@ impl<'a> Stasher<'a> {
 
     pub(crate) fn new_hasher(hasher: &'a mut seahash::SeaHasher) -> Stasher<'a> {
         Stasher {
-            backend: StasherBackend::Hash(HashingStasher { hasher }),
+            backend: StasherBackend::Hash(HashingStasher {
+                hasher,
+                current_unordered_hash: None,
+            }),
         }
     }
 
@@ -106,13 +125,13 @@ impl<'a> Stasher<'a> {
     fn write_primitive_array<T: PrimitiveReadWrite, I: Iterator<Item = T>>(&mut self, it: I) {
         self.backend
             .write_raw_bytes(&[ValueType::Array(T::TYPE).to_byte()]);
-        let bookmark = self.backend.bookmark_length_prefix();
+        let bookmark = self.backend.begin_sequence(Order::Ordered);
         let mut length: u32 = 0;
         for x in it {
             x.write_raw_bytes_to(self);
             length += 1;
         }
-        self.backend.write_length_prefix(bookmark, length);
+        self.backend.end_sequence(bookmark, length);
     }
 }
 
@@ -273,37 +292,71 @@ impl<'a> Stasher<'a> {
         self.write_primitive_array(it);
     }
 
-    pub fn array_of_objects_slice<T: 'static + Stashable>(&mut self, objects: &[T]) {
-        self.array_of_objects_iter(objects.iter());
+    pub fn array_of_objects_slice<T: Stashable>(&mut self, objects: &[T], order: Order) {
+        self.array_of_objects_iter(objects.iter(), order);
     }
 
-    pub fn array_of_objects_iter<'b, T: 'static + Stashable, I: Iterator<Item = &'b T>>(
+    pub fn array_of_objects_iter<'b, T: 'b + Stashable, I: Iterator<Item = &'b T>>(
         &mut self,
         it: I,
+        order: Order,
     ) {
         self.backend
             .write_raw_bytes(&[ValueType::ArrayOfObjects.to_byte()]);
-        let bookmark = self.backend.bookmark_length_prefix();
+        let bookmark = self.backend.begin_sequence(order);
         let mut length: u32 = 0;
         for object in it {
-            self.backend.stash_dependency(object);
+            let hash = ObjectHash::hash_object(object);
+            self.backend
+                .stash_dependency(hash, |stasher| object.stash(stasher));
             length += 1;
         }
-        self.backend.write_length_prefix(bookmark, length);
+        self.backend.end_sequence(bookmark, length);
+    }
+
+    pub fn array_of_proxy_objects<T, I: Iterator<Item = T>, F>(
+        &mut self,
+        it: I,
+        mut f: F,
+        order: Order,
+    ) where
+        F: FnMut(&T, &mut Stasher),
+    {
+        self.backend
+            .write_raw_bytes(&[ValueType::ArrayOfObjects.to_byte()]);
+        let bookmark = self.backend.begin_sequence(order);
+        let mut length: u32 = 0;
+        for object in it {
+            let mut stash_this_object = |stasher: &mut Stasher| f(&object, stasher);
+            let hash = ObjectHash::hash_object_proxy(&mut stash_this_object);
+            self.backend.stash_dependency(hash, stash_this_object);
+            length += 1;
+        }
+        self.backend.end_sequence(bookmark, length);
     }
 
     /// Write a string
     pub fn string(&mut self, x: &str) {
         self.backend.write_raw_bytes(&[ValueType::String.to_byte()]);
-        let bookmark = self.backend.bookmark_length_prefix();
+        let bookmark = self.backend.begin_sequence(Order::Ordered);
         let bytes = x.as_bytes();
         self.write_raw_bytes(bytes);
-        self.backend
-            .write_length_prefix(bookmark, bytes.len() as u32);
+        self.backend.end_sequence(bookmark, bytes.len() as u32);
     }
 
-    pub fn stashable<T: 'static + Stashable>(&mut self, object: &T) {
+    pub fn object<T: Stashable>(&mut self, object: &T) {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        self.backend.stash_dependency(object);
+        let hash = ObjectHash::hash_object(object);
+        self.backend
+            .stash_dependency(hash, |stasher| object.stash(stasher));
+    }
+
+    pub fn object_proxy<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Stasher),
+    {
+        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
+        let hash = ObjectHash::hash_object_proxy(&mut f);
+        self.backend.stash_dependency(hash, f);
     }
 }
