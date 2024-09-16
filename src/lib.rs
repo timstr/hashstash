@@ -6,6 +6,7 @@ use std::{
     rc::Rc,
 };
 
+mod cache;
 mod stasher;
 mod unstasher;
 mod valuetypes;
@@ -13,6 +14,7 @@ mod valuetypes;
 #[cfg(test)]
 mod test;
 
+pub use cache::HashCache;
 pub use stasher::{Order, Stasher};
 pub use unstasher::{InplaceUnstasher, UnstashError, Unstasher};
 pub use valuetypes::{PrimitiveType, ValueType};
@@ -29,6 +31,12 @@ pub trait Stashable {
     /// object, and a second time to serialize the same contents
     /// to create a new stashed object if no match yet exists.
     fn stash(&self, stasher: &mut Stasher);
+}
+
+impl<T: Stashable> Stashable for &T {
+    fn stash(&self, stasher: &mut Stasher) {
+        T::stash(self, stasher);
+    }
 }
 
 /// Trait for objects that can be unstashed or deserialized by
@@ -70,17 +78,17 @@ pub trait UnstashableInplace {
 /// A small and fixed-size summary of the contents to an object,
 /// such that changes to an object result in a different ObjectHash.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-struct ObjectHash(u64);
+pub struct ObjectHash(u64);
 
 impl ObjectHash {
     /// Create a new ObjectHash by hashing a Stashable object
-    fn from_stashable<T: Stashable>(object: &T) -> ObjectHash {
+    pub fn from_stashable<T: Stashable>(object: &T) -> ObjectHash {
         Self::with_stasher(|stasher| object.stash(stasher))
     }
 
     /// Create a new ObjectHash by hashing the data given to
     /// a Stasher in the provided function
-    fn with_stasher<F: FnMut(&mut Stasher)>(mut f: F) -> ObjectHash {
+    pub fn with_stasher<F: FnMut(&mut Stasher)>(mut f: F) -> ObjectHash {
         let mut hasher = seahash::SeaHasher::new();
 
         let mut stasher = Stasher::new_hasher(&mut hasher);
