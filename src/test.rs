@@ -3,8 +3,8 @@ use rand::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    test_stash_roundtrip, test_stash_roundtrip_inplace, InplaceUnstashPhase, InplaceUnstasher,
-    Order, Stash, Stashable, Stasher, UnstashError, Unstashable, UnstashableInplace, Unstasher,
+    test_stash_roundtrip, test_stash_roundtrip_inplace, InplaceUnstasher, Order, Stash, Stashable,
+    Stasher, UnstashError, Unstashable, UnstashableInplace, Unstasher,
 };
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
@@ -692,8 +692,10 @@ impl Unstashable for StructWithHashSetOfBasicObjects {
 impl UnstashableInplace for StructWithHashSetOfBasicObjects {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
         let mut temp_vec = Vec::<StructA>::new();
+        // NOTE: could also use array_of_proxy_objects but that
+        // gets tested elsewhere
         unstasher.array_of_objects_vec::<StructA>(&mut temp_vec)?;
-        if unstasher.phase() == InplaceUnstashPhase::Write {
+        if unstasher.time_to_write() {
             self.objects = temp_vec.into_iter().collect();
         }
         Ok(())
@@ -852,7 +854,7 @@ impl UnstashableInplace for StructWithWeirdContainer {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
         let mut temp_objects: Vec<StructA> = Vec::new();
         unstasher.array_of_objects_vec(&mut temp_objects)?;
-        if unstasher.phase() == InplaceUnstashPhase::Write {
+        if unstasher.time_to_write() {
             self.container.clear();
             for object in temp_objects {
                 self.container.insert_somewhere_random(object);
@@ -1029,7 +1031,7 @@ impl Unstashable for Graph {
 
 impl UnstashableInplace for Graph {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
-        let phase = unstasher.phase();
+        let time_to_write = unstasher.time_to_write();
 
         let mut node_ids_to_keep = Vec::<i32>::new();
 
@@ -1037,7 +1039,7 @@ impl UnstashableInplace for Graph {
             let id = u.i32()?;
             let data = u.array_of_u8_vec()?;
 
-            if phase == InplaceUnstashPhase::Write {
+            if time_to_write {
                 if let Some(node) = self.node_mut(id) {
                     // Preserve existing nodes with matching ids
                     node.set_data(data);
@@ -1053,7 +1055,7 @@ impl UnstashableInplace for Graph {
         })?;
 
         // Remove unreferenced nodes
-        if phase == InplaceUnstashPhase::Write {
+        if time_to_write {
             for id in self.node_ids() {
                 if !node_ids_to_keep.contains(&id) {
                     self.remove_node(id);
@@ -1062,7 +1064,7 @@ impl UnstashableInplace for Graph {
         }
 
         // Clear all connections
-        if phase == InplaceUnstashPhase::Write {
+        if time_to_write {
             for id in self.node_ids() {
                 self.disconnect_node(id);
             }
@@ -1073,7 +1075,7 @@ impl UnstashableInplace for Graph {
             let src = u.i32()?;
             let dst = u.i32()?;
 
-            if phase == InplaceUnstashPhase::Write {
+            if time_to_write {
                 self.connect_nodes(src, dst);
             }
 

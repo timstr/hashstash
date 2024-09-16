@@ -14,10 +14,10 @@ mod valuetypes;
 mod test;
 
 pub use stasher::{Order, Stasher};
-pub use unstasher::{InplaceUnstashPhase, InplaceUnstasher, UnstashError, Unstasher};
+pub use unstasher::{InplaceUnstasher, UnstashError, Unstasher};
 pub use valuetypes::{PrimitiveType, ValueType};
 
-use unstasher::UnstasherBackend;
+use unstasher::{InplaceUnstashPhase, UnstasherBackend};
 
 /// Trait for hashing and serializing an object
 pub trait Stashable {
@@ -165,12 +165,12 @@ impl StashMap {
     ) -> Result<R, UnstashError> {
         let stashed_object = self.objects.get(&hash).unwrap();
 
-        let mut stash_out =
+        let mut unstasher =
             Unstasher::new(UnstasherBackend::from_stashed_object(stashed_object, self));
 
-        let result = f(&mut stash_out)?;
+        let result = f(&mut unstasher)?;
 
-        if !stash_out.backend().is_finished() {
+        if !unstasher.backend().is_finished() {
             return Err(UnstashError::NotFinished);
         }
 
@@ -191,14 +191,14 @@ impl StashMap {
     ) -> Result<(), UnstashError> {
         let stashed_object = self.objects.get(&hash).unwrap();
 
-        let mut stash_out = InplaceUnstasher::new(
+        let mut unstasher = InplaceUnstasher::new(
             UnstasherBackend::from_stashed_object(stashed_object, self),
             phase,
         );
 
-        object.unstash_inplace(&mut stash_out)?;
+        object.unstash_inplace(&mut unstasher)?;
 
-        if !stash_out.backend().is_finished() {
+        if !unstasher.backend().is_finished() {
             return Err(UnstashError::NotFinished);
         }
 

@@ -573,7 +573,7 @@ impl<'a> Unstasher<'a> {
 /// The two phases of in-place unstashing, used to separate validation
 /// and error detection from object modification for improved safety
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub enum InplaceUnstashPhase {
+pub(crate) enum InplaceUnstashPhase {
     /// The stashed contents are being validated and the object should
     /// not be written to. All the same contents should be unstashed.
     Validate,
@@ -846,9 +846,11 @@ impl<'a> InplaceUnstasher<'a> {
         self.backend.object_proxy(f)
     }
 
-    /// Get the phase of the unstasher, i.e. whether we're validating or writing
-    pub fn phase(&self) -> InplaceUnstashPhase {
-        self.phase
+    /// Are we in the write phase, i.e. should lasting changes be made to the
+    /// data structures we're unstashing? If not, the same data should be read
+    /// but as a practice run, without mutating the underlying data structures.
+    pub fn time_to_write(&self) -> bool {
+        self.phase == InplaceUnstashPhase::Write
     }
 
     /// Get the type of the next stashed object, if there is one
