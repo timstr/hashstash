@@ -156,15 +156,14 @@ impl StashMap {
     /// Unstash/deserialize an object by finding an existing stashed
     /// object for the given hash and passing an [Unstasher] with
     /// its contents to the given function.
+    /// This method panics if there is not stashed object with the
+    /// given hash.
     fn unstash<'a, R, F: FnMut(&mut Unstasher) -> Result<R, UnstashError>>(
         &self,
         hash: ObjectHash,
         mut f: F,
     ) -> Result<R, UnstashError> {
-        let Some(stashed_object) = self.objects.get(&hash) else {
-            // Is this ever possible?
-            return Err(UnstashError::NotFound);
-        };
+        let stashed_object = self.objects.get(&hash).unwrap();
 
         let mut stash_out =
             Unstasher::new(UnstasherBackend::from_stashed_object(stashed_object, self));
@@ -182,16 +181,15 @@ impl StashMap {
     /// object for the given hash and then calling the object's
     /// [UnstashableInplace::unstash_inplace] method with the given
     /// phase.
+    /// This method panics if there is not stashed object with the
+    /// given hash.
     fn unstash_inplace<'a, T: UnstashableInplace>(
         &self,
         hash: ObjectHash,
         object: &mut T,
         phase: InplaceUnstashPhase,
     ) -> Result<(), UnstashError> {
-        let Some(stashed_object) = self.objects.get(&hash) else {
-            // Is this ever possible?
-            return Err(UnstashError::NotFound);
-        };
+        let stashed_object = self.objects.get(&hash).unwrap();
 
         let mut stash_out = InplaceUnstasher::new(
             UnstasherBackend::from_stashed_object(stashed_object, self),

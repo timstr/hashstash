@@ -115,8 +115,8 @@ impl<'a> StasherBackend<'a> {
 }
 
 /// A stasher is used to visit the contents of an object as part of its
-/// [crate::Unstashable::unstash] implementation, interchangeably to
-/// hash and to serialize those contents.
+/// [Stashable::stash] implementation, interchangeably to both hash and
+/// to serialize those contents.
 pub struct Stasher<'a> {
     backend: StasherBackend<'a>,
 }

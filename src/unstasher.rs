@@ -5,17 +5,23 @@ use crate::{
     UnstashableInplace, ValueType,
 };
 
+/// Error that can happen while unstashing an object
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnstashError {
+    /// The next stashed value does not have the expected type
     WrongValueType,
-    OutOfData,
-    Corrupted,
-    NotFinished,
 
-    // TODO: NotFound should probably be merged with Corrupted
-    NotFound,
+    /// There isn't any stashed data left
+    OutOfData,
+
+    /// The stashed data is internally inconsistent
+    Corrupted,
+
+    /// An object was unstashed without reading all its stashed data
+    NotFinished,
 }
 
+/// Iterator over an array of primitives being unstashed
 pub struct PrimitiveIterator<'a, T> {
     data: &'a [u8],
     _phantom_data: PhantomData<T>,
@@ -41,6 +47,7 @@ impl<'a, T: PrimitiveReadWrite> ExactSizeIterator for PrimitiveIterator<'a, T> {
     }
 }
 
+/// Iterator over an array of [Unstashable] objects being unstashed
 pub struct ObjectIterator<'a, T> {
     hashes: &'a [ObjectHash],
     stashmap: &'a StashMap,
@@ -59,6 +66,7 @@ impl<'a, T: Unstashable> Iterator for ObjectIterator<'a, T> {
     }
 }
 
+/// The backend for both an [Unstasher] and an [InplaceUnstasher]
 pub(crate) struct UnstasherBackend<'a> {
     bytes: &'a [u8],
     dependencies: &'a [ObjectHash],
@@ -67,6 +75,7 @@ pub(crate) struct UnstasherBackend<'a> {
 
 /// Private methods
 impl<'a> UnstasherBackend<'a> {
+    /// Create a new backend from a stashed object
     pub(crate) fn from_stashed_object(
         stashed_object: &'a StashedObject,
         stashmap: &'a StashMap,
@@ -78,16 +87,18 @@ impl<'a> UnstasherBackend<'a> {
         }
     }
 
+    /// Have all serialized contents and dependencies been read?
     pub(crate) fn is_finished(&self) -> bool {
         self.bytes.is_empty() && self.dependencies.is_empty()
     }
 
+    /// Read a sequence of raw bytes
     pub(crate) fn read_raw_bytes(&mut self, len: usize) -> Result<&[u8], UnstashError> {
         if let Some((head, rest)) = self.bytes.split_at_checked(len) {
             self.bytes = rest;
             Ok(head)
         } else {
-            Err(UnstashError::OutOfData)
+            Err(UnstashError::Corrupted)
         }
     }
 
@@ -112,6 +123,7 @@ impl<'a> UnstasherBackend<'a> {
         self.bytes.first().cloned().ok_or(UnstashError::OutOfData)
     }
 
+    /// Read a sequence of bytes without advancing
     fn peek_bytes(&self, len: usize) -> Result<&[u8], UnstashError> {
         if let Some((head, _)) = self.bytes.split_at_checked(len) {
             Ok(head)
@@ -120,6 +132,23 @@ impl<'a> UnstasherBackend<'a> {
         }
     }
 
+    /// Read the [ValueType] at the next byte
+    fn read_value_type(&mut self) -> Result<ValueType, UnstashError> {
+        ValueType::from_byte(self.read_byte()?)
+    }
+
+    /// Read the 32-bit length at the next four bytes.
+    /// This assumes that we are in the middle of reading
+    /// a value type with a prefixed length.
+    fn read_value_length(&mut self) -> Result<usize, UnstashError> {
+        if self.remaining_len() < u32::SIZE {
+            return Err(UnstashError::Corrupted);
+        }
+        let len = u32::read_raw_bytes_from(&mut self.bytes);
+        Ok(len as usize)
+    }
+
+    /// Read the hash of the next dependency
     fn read_dependency(&mut self) -> Result<ObjectHash, UnstashError> {
         let Some((hash, remaining_hashes)) = self.dependencies.split_first() else {
             return Err(UnstashError::Corrupted);
@@ -147,11 +176,7 @@ impl<'a> UnstasherBackend<'a> {
     /// reading its value
     fn read_primitive<T: 'static + PrimitiveReadWrite>(&mut self) -> Result<T, UnstashError> {
         self.reset_on_error(|unstasher| {
-            if unstasher.remaining_len() < (1 + T::SIZE) {
-                return Err(UnstashError::OutOfData);
-            }
-            let the_type = ValueType::from_byte(unstasher.read_byte().unwrap())?;
-            if the_type != ValueType::Primitive(T::TYPE) {
+            if unstasher.read_value_type()? != ValueType::Primitive(T::TYPE) {
                 return Err(UnstashError::WrongValueType);
             }
             let x = T::read_raw_bytes_from(&mut unstasher.bytes);
@@ -159,26 +184,22 @@ impl<'a> UnstasherBackend<'a> {
         })
     }
 
-    /// Read an array of primitives to a vector, checking for its tag type and length
-    /// first and then reading its values
+    /// Read an array of primitives to a vector
     fn read_primitive_array_vec<T: 'static + PrimitiveReadWrite>(
         &mut self,
     ) -> Result<Vec<T>, UnstashError> {
         Ok(self.read_primitive_array_iter()?.collect())
     }
 
+    /// Read an array of primitives via an iterator
     fn read_primitive_array_iter<T: 'static + PrimitiveReadWrite>(
         &mut self,
     ) -> Result<PrimitiveIterator<'a, T>, UnstashError> {
         self.reset_on_error(|unstasher| {
-            if unstasher.remaining_len() < (u8::SIZE + u32::SIZE) {
-                return Err(UnstashError::OutOfData);
-            }
-            let the_type = ValueType::from_byte(unstasher.read_byte().unwrap())?;
-            if the_type != ValueType::Array(T::TYPE) {
+            if unstasher.read_value_type()? != ValueType::Array(T::TYPE) {
                 return Err(UnstashError::WrongValueType);
             }
-            let len = u32::read_raw_bytes_from(&mut unstasher.bytes) as usize;
+            let len = unstasher.read_value_length()?;
             let num_bytes = len * T::SIZE;
             if unstasher.remaining_len() < num_bytes {
                 return Err(UnstashError::Corrupted);
@@ -192,24 +213,23 @@ impl<'a> UnstasherBackend<'a> {
         })
     }
 
+    /// Read an array of [Unstashable] objects into a vector
     fn read_array_of_object_vec<T: 'static + Unstashable>(
         &mut self,
     ) -> Result<Vec<T>, UnstashError> {
         self.read_array_of_object_iter()?.collect()
     }
 
+    /// Read an array of [Unstashable] objects via an iterator
     fn read_array_of_object_iter<T: 'static + Unstashable>(
         &mut self,
     ) -> Result<ObjectIterator<T>, UnstashError> {
         self.reset_on_error(|unstasher| {
-            if unstasher.remaining_len() < (u8::SIZE + u32::SIZE) {
-                return Err(UnstashError::OutOfData);
-            }
-            let the_type = ValueType::from_byte(unstasher.read_byte().unwrap())?;
-            if the_type != ValueType::ArrayOfObjects {
+            if unstasher.read_value_type()? != ValueType::ArrayOfObjects {
                 return Err(UnstashError::WrongValueType);
             }
-            let len = u32::read_raw_bytes_from(&mut unstasher.bytes) as usize;
+            let len = unstasher.read_value_length()?;
+
             let Some((hashes, remaining_hashes)) = unstasher.dependencies.split_at_checked(len)
             else {
                 return Err(UnstashError::Corrupted);
@@ -224,19 +244,18 @@ impl<'a> UnstasherBackend<'a> {
         })
     }
 
+    /// Read an array of stashed objects via the given function which
+    /// is called once per object with an [Unstasher] instance.
     fn read_array_of_object_proxies<F: FnMut(&mut Unstasher) -> Result<(), UnstashError>>(
         &mut self,
         mut f: F,
     ) -> Result<(), UnstashError> {
         self.reset_on_error(|unstasher| {
-            if unstasher.remaining_len() < (u8::SIZE + u32::SIZE) {
-                return Err(UnstashError::OutOfData);
-            }
-            let the_type = ValueType::from_byte(unstasher.read_byte().unwrap())?;
-            if the_type != ValueType::ArrayOfObjects {
+            if unstasher.read_value_type()? != ValueType::ArrayOfObjects {
                 return Err(UnstashError::WrongValueType);
             }
-            let len = u32::read_raw_bytes_from(&mut unstasher.bytes) as usize;
+            let len = unstasher.read_value_length()?;
+
             let Some((hashes, remaining_hashes)) = unstasher.dependencies.split_at_checked(len)
             else {
                 return Err(UnstashError::Corrupted);
@@ -249,45 +268,49 @@ impl<'a> UnstasherBackend<'a> {
         })
     }
 
-    fn unstash_inplace<T: UnstashableInplace>(
+    /// Read a single given [UnstashableInplace] object with the given phase
+    fn object_inplace<T: UnstashableInplace>(
         &mut self,
         object: &mut T,
         phase: InplaceUnstashPhase,
     ) -> Result<(), UnstashError> {
         self.reset_on_error(|unstasher| {
-            if ValueType::from_byte(unstasher.read_byte()?)? != ValueType::StashedObject {
+            if unstasher.read_value_type()? != ValueType::StashedObject {
                 return Err(UnstashError::WrongValueType);
             }
+
             let hash = unstasher.read_dependency()?;
             unstasher.stashmap.unstash_inplace(hash, object, phase)
         })
     }
 
+    /// Read a single object via a given function that receives an [Unstasher]
     fn object_proxy<R: 'static, F>(&mut self, f: F) -> Result<R, UnstashError>
     where
         F: FnMut(&mut Unstasher) -> Result<R, UnstashError>,
     {
         self.reset_on_error(|unstasher| {
-            if ValueType::from_byte(unstasher.read_byte()?)? != ValueType::StashedObject {
+            if unstasher.read_value_type()? != ValueType::StashedObject {
                 return Err(UnstashError::WrongValueType);
             }
+
             let hash = unstasher.read_dependency()?;
             unstasher.stashmap.unstash(hash, f)
         })
     }
 
+    /// Read a single string
     fn string(&mut self) -> Result<String, UnstashError> {
-        if self.remaining_len() < (u8::SIZE + u32::SIZE) {
-            return Err(UnstashError::OutOfData);
-        }
-        let the_type = ValueType::from_byte(self.read_byte()?)?;
-        if the_type != ValueType::String {
-            return Err(UnstashError::WrongValueType);
-        }
-        let len = u32::read_raw_bytes_from(&mut self.bytes) as usize;
-        let slice = self.read_raw_bytes(len)?;
-        let str_slice = std::str::from_utf8(slice).map_err(|_| UnstashError::Corrupted)?;
-        Ok(str_slice.to_string())
+        self.reset_on_error(|unstasher| {
+            if unstasher.read_value_type()? != ValueType::String {
+                return Err(UnstashError::WrongValueType);
+            }
+            let len = unstasher.read_value_length()?;
+
+            let slice = unstasher.read_raw_bytes(len)?;
+            let str_slice = std::str::from_utf8(slice).map_err(|_| UnstashError::Corrupted)?;
+            Ok(str_slice.to_string())
+        })
     }
 
     /// Read the type of the next value
@@ -315,15 +338,19 @@ impl<'a> UnstasherBackend<'a> {
     }
 }
 
+/// Struct for unstashing and deserializing by creating new objects.
+/// This struct is passed to [Unstashable::unstash]
 pub struct Unstasher<'a> {
     backend: UnstasherBackend<'a>,
 }
 
 impl<'a> Unstasher<'a> {
+    /// Create a new instance
     pub(crate) fn new(backend: UnstasherBackend<'a>) -> Unstasher<'a> {
         Unstasher { backend }
     }
 
+    /// Get the backend
     pub(crate) fn backend(&self) -> &UnstasherBackend<'a> {
         &self.backend
     }
@@ -485,18 +512,21 @@ impl<'a> Unstasher<'a> {
         self.backend.read_primitive_array_iter()
     }
 
+    /// Read an array of [Unstashable] objects into a vector
     pub fn array_of_objects_vec<T: 'static + Unstashable>(
         &mut self,
     ) -> Result<Vec<T>, UnstashError> {
         self.backend.read_array_of_object_vec()
     }
 
+    /// Read an array of [Unstashable] objects into an iterator
     pub fn array_of_objects_iter<T: 'static + Unstashable>(
         &mut self,
     ) -> Result<ObjectIterator<T>, UnstashError> {
         self.backend.read_array_of_object_iter()
     }
 
+    /// Read an array of objects via a function receiving an [Unstasher] for each object
     pub fn array_of_proxy_objects<F>(&mut self, f: F) -> Result<(), UnstashError>
     where
         F: FnMut(&mut Unstasher) -> Result<(), UnstashError>,
@@ -504,14 +534,17 @@ impl<'a> Unstasher<'a> {
         self.backend.read_array_of_object_proxies(f)
     }
 
+    /// Read a single string
     pub fn string(&mut self) -> Result<String, UnstashError> {
         self.backend.string()
     }
 
+    /// Read a single [Unstashable] object
     pub fn object<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
         self.backend.object_proxy(T::unstash)
     }
 
+    /// Read a single object via a function receiving an [Unstasher]
     pub fn object_proxy<T: 'static, F>(&mut self, f: F) -> Result<T, UnstashError>
     where
         F: FnMut(&mut Unstasher) -> Result<T, UnstashError>,
@@ -519,31 +552,46 @@ impl<'a> Unstasher<'a> {
         self.backend.object_proxy(f)
     }
 
+    /// Get the type of the next value, if one exists
     pub fn peek_type(&self) -> Result<ValueType, UnstashError> {
         self.backend.peek_type()
     }
 
+    /// Get the length of the next value, if it has one.
+    /// For arrays, this is the number of objects.
+    /// For strings, this is the number of bytes in its UTF-8 encoding.
     pub fn peek_length(&self) -> Result<usize, UnstashError> {
         self.backend.peek_length()
     }
 
+    /// Is there no data left to read?
     pub fn is_empty(&self) -> bool {
         self.backend.is_empty()
     }
 }
 
+/// The two phases of in-place unstashing, used to separate validation
+/// and error detection from object modification for improved safety
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum InplaceUnstashPhase {
+    /// The stashed contents are being validated and the object should
+    /// not be written to. All the same contents should be unstashed.
     Validate,
+
+    /// The stashed contents have been validated and should now be
+    /// written to the object. All the same contents should be unstashed.
     Write,
 }
 
+/// Struct for unstashing and deserializing by modifying existing objects.
+/// This struct is passed to [UnstashableInplace::unstash_inplace]
 pub struct InplaceUnstasher<'a> {
     backend: UnstasherBackend<'a>,
     phase: InplaceUnstashPhase,
 }
 
 impl<'a> InplaceUnstasher<'a> {
+    /// Create a new unstasher with the given backend and phase
     pub(crate) fn new(
         backend: UnstasherBackend<'a>,
         phase: InplaceUnstashPhase,
@@ -551,10 +599,13 @@ impl<'a> InplaceUnstasher<'a> {
         InplaceUnstasher { backend, phase }
     }
 
+    /// Get the backend
     pub(crate) fn backend(&self) -> &UnstasherBackend<'a> {
         &self.backend
     }
 
+    /// Read a single primitive. The reference is only written
+    /// to during the Write phase.
     fn read_primitive<T: 'static + PrimitiveReadWrite>(
         &mut self,
         x: &mut T,
@@ -566,6 +617,8 @@ impl<'a> InplaceUnstasher<'a> {
         Ok(())
     }
 
+    /// Read an array of primitives to a vector. The reference is
+    /// only written to during the Write phase.
     fn read_primitive_array_vec<T: 'static + PrimitiveReadWrite>(
         &mut self,
         v: &mut Vec<T>,
@@ -579,111 +632,139 @@ impl<'a> InplaceUnstasher<'a> {
 }
 
 impl<'a> InplaceUnstasher<'a> {
-    /// Read a single bool value
+    /// Read a single bool value. The reference is only written
+    /// to during the Write phase.
     pub fn bool(&mut self, x: &mut bool) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single u8 value
+    /// Read a single u8 value. The reference is only written
+    /// to during the Write phase.
     pub fn u8(&mut self, x: &mut u8) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single i8 value
+    /// Read a single i8 value. The reference is only written
+    /// to during the Write phase.
     pub fn i8(&mut self, x: &mut i8) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single u16 value
+    /// Read a single u16 value. The reference is only written
+    /// to during the Write phase.
     pub fn u16(&mut self, x: &mut u16) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single i16 value
+    /// Read a single i16 value. The reference is only written
+    /// to during the Write phase.
     pub fn i16(&mut self, x: &mut i16) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single u32 value
+    /// Read a single u32 value. The reference is only written
+    /// to during the Write phase.
     pub fn u32(&mut self, x: &mut u32) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single i32 value
+    /// Read a single i32 value. The reference is only written
+    /// to during the Write phase.
     pub fn i32(&mut self, x: &mut i32) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single u64 value
+    /// Read a single u64 value. The reference is only written
+    /// to during the Write phase.
     pub fn u64(&mut self, x: &mut u64) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single i64 value
+    /// Read a single i64 value. The reference is only written
+    /// to during the Write phase.
     pub fn i64(&mut self, x: &mut i64) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single f32 value
+    /// Read a single f32 value. The reference is only written
+    /// to during the Write phase.
     pub fn f32(&mut self, x: &mut f32) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read a single f64 value
+    /// Read a single f64 value. The reference is only written
+    /// to during the Write phase.
     pub fn f64(&mut self, x: &mut f64) -> Result<(), UnstashError> {
         self.read_primitive(x)
     }
 
-    /// Read an array of u8 values into a Vec
+    /// Read an array of u8 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_u8_vec(&mut self, x: &mut Vec<u8>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of i8 values into a Vec
+    /// Read an array of i8 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_i8_vec(&mut self, x: &mut Vec<i8>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of u16 values into a Vec
+    /// Read an array of u16 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_u16_vec(&mut self, x: &mut Vec<u16>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of i16 values into a Vec
+    /// Read an array of i16 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_i16_vec(&mut self, x: &mut Vec<i16>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of u32 values into a Vec
+    /// Read an array of u32 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_u32_vec(&mut self, x: &mut Vec<u32>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of i32 values into a Vec
+    /// Read an array of i32 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_i32_vec(&mut self, x: &mut Vec<i32>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of u64 values into a Vec
+    /// Read an array of u64 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_u64_vec(&mut self, x: &mut Vec<u64>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of i64 values into a Vec
+    /// Read an array of i64 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_i64_vec(&mut self, x: &mut Vec<i64>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of f32 values into a Vec
+    /// Read an array of f32 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_f32_vec(&mut self, x: &mut Vec<f32>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
-    /// Read an array of f64 values into a Vec
+    /// Read an array of f64 values into a Vec. The reference is only written
+    /// to during the Write phase. Existing contents are completely overwritten.
     pub fn array_of_f64_vec(&mut self, x: &mut Vec<f64>) -> Result<(), UnstashError> {
         self.read_primitive_array_vec(x)
     }
 
+    /// Read an array of [Unstashable] objects into a Vec. The reference is
+    /// only written to during the Write phase. Existing contents are completely
+    /// overwritten.
+    ///
+    /// If you need to work with a different container or need more fine-grained
+    /// control over how objects are written to, use [Self::array_of_proxy_objects]
+    /// instead.
     pub fn array_of_objects_vec<T: 'static + Unstashable>(
         &mut self,
         x: &mut Vec<T>,
@@ -695,6 +776,19 @@ impl<'a> InplaceUnstasher<'a> {
         Ok(())
     }
 
+    /// Read an array of objects and visit each with the given function that receives
+    /// an [Unstasher] instance. This can be used to interface with more general kinds
+    /// of containers and data structures at the cost of needing to know more about
+    /// the underlying Validation and Write phases.
+    ///
+    /// To use this method correctly, objects should always be read and unstashed,
+    /// but actual modifications to data structures should only be done during the
+    /// `Write` phase when `self.phase() == InplaceUnstashPhase::Write`. Failure to
+    /// do so may result in objects being left in unexpected states or duplicated
+    /// modifications.
+    ///
+    /// See [crate::test_stash_roundtrip_inplace] for a way to automatically test
+    /// whether this method is being used correctly.
     pub fn array_of_proxy_objects<F>(&mut self, f: F) -> Result<(), UnstashError>
     where
         F: FnMut(&mut Unstasher) -> Result<(), UnstashError>,
@@ -702,6 +796,8 @@ impl<'a> InplaceUnstasher<'a> {
         self.backend.read_array_of_object_proxies(f)
     }
 
+    /// Read a string. The reference is only written to during the Write phase.
+    /// Existing contents are completely overwritten.
     pub fn string(&mut self, x: &mut String) -> Result<(), UnstashError> {
         let s = self.backend.string()?;
         if self.phase == InplaceUnstashPhase::Write {
@@ -710,6 +806,9 @@ impl<'a> InplaceUnstasher<'a> {
         Ok(())
     }
 
+    /// Read an object which is [Unstashable]. The reference is only written to
+    /// during the Write phase. The existing object is completely overwritten
+    /// with the newly-unstashed object.
     pub fn object<T: 'static + Unstashable>(&mut self, object: &mut T) -> Result<(), UnstashError> {
         let other_object = self.backend.object_proxy(T::unstash)?;
         if self.phase == InplaceUnstashPhase::Write {
@@ -718,13 +817,28 @@ impl<'a> InplaceUnstasher<'a> {
         Ok(())
     }
 
+    /// Read an object which is [UnstashableInplace]. The given reference is
+    /// itself unstashed in place using the same phase as the current object.
     pub fn object_inplace<T: UnstashableInplace>(
         &mut self,
         object: &mut T,
     ) -> Result<(), UnstashError> {
-        self.backend.unstash_inplace(object, self.phase)
+        self.backend.object_inplace(object, self.phase)
     }
 
+    /// Read an object and with the given function that receives an [Unstasher]
+    /// instance. This can be used to interface with more general kinds of
+    /// containers and data structures at the cost of needing to know more about
+    /// the underlying Validation and Write phases.
+    ///
+    /// To use this method correctly, objects should always be read and unstashed,
+    /// but actual modifications to data structures should only be done during the
+    /// `Write` phase when `self.phase() == InplaceUnstashPhase::Write`. Failure to
+    /// do so may result in objects being left in unexpected states or duplicated
+    /// modifications.
+    ///
+    /// See [crate::test_stash_roundtrip_inplace] for a way to automatically test
+    /// whether this method is being used correctly.
     pub fn object_proxy<R: 'static, F>(&mut self, f: F) -> Result<R, UnstashError>
     where
         F: FnMut(&mut Unstasher) -> Result<R, UnstashError>,
@@ -732,18 +846,24 @@ impl<'a> InplaceUnstasher<'a> {
         self.backend.object_proxy(f)
     }
 
+    /// Get the phase of the unstasher, i.e. whether we're validating or writing
     pub fn phase(&self) -> InplaceUnstashPhase {
         self.phase
     }
 
+    /// Get the type of the next stashed object, if there is one
     pub fn peek_type(&self) -> Result<ValueType, UnstashError> {
         self.backend.peek_type()
     }
 
+    /// Get the length of the next value, if it has one.
+    /// For arrays, this is the number of objects.
+    /// For strings, this is the number of bytes in its UTF-8 encoding.
     pub fn peek_length(&self) -> Result<usize, UnstashError> {
         self.backend.peek_length()
     }
 
+    /// Is there no data left?
     pub fn is_empty(&self) -> bool {
         self.backend.is_empty()
     }
