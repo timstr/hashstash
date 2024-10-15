@@ -171,6 +171,14 @@ impl<'a> Stasher<'a> {
         }
         self.backend.end_sequence(bookmark, length);
     }
+
+    /// Returns true iff the backend is hashing and not serializing
+    pub(crate) fn hashing(&self) -> bool {
+        match &self.backend {
+            StasherBackend::Hash(_) => true,
+            StasherBackend::Serialize(_) => false,
+        }
+    }
 }
 
 /// Public methods

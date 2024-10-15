@@ -14,7 +14,7 @@ mod valuetypes;
 #[cfg(test)]
 mod test;
 
-pub use cache::HashCache;
+pub use cache::{HashCache, HashCacheProperty};
 pub use stasher::{Order, Stasher};
 pub use unstasher::{InplaceUnstasher, UnstashError, Unstasher};
 pub use valuetypes::{PrimitiveType, ValueType};

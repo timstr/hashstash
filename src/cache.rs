@@ -1,6 +1,13 @@
-use std::hash::Hasher;
+use std::{
+    cell::Cell,
+    hash::Hasher,
+    ops::{Deref, DerefMut},
+};
 
-use crate::{ObjectHash, Stashable};
+use crate::{
+    InplaceUnstasher, ObjectHash, Stashable, Stasher, UnstashError, Unstashable,
+    UnstashableInplace, Unstasher,
+};
 
 fn combine_hashes(hashes: &[ObjectHash]) -> ObjectHash {
     let mut hasher = seahash::SeaHasher::new();
@@ -10,10 +17,84 @@ fn combine_hashes(hashes: &[ObjectHash]) -> ObjectHash {
     ObjectHash(hasher.finish())
 }
 
-/// HashCache is the cached result of a function call that is only
+/// HashCache is a wrapper around a Stashable object that caches
+/// the hash value of that object between repeated non-mutable
+/// accesses. Mutably accessing the stored object invalidates
+/// the cached hash value, which is only recomputed as needed.
+pub struct HashCache<T> {
+    /// The cached hash
+    hash: Cell<Option<ObjectHash>>,
+
+    /// The stored object
+    value: T,
+}
+
+impl<T> HashCache<T> {
+    /// Create a new HashCache with the given value.
+    /// The hash is not yet computed or cached.
+    pub fn new(value: T) -> HashCache<T> {
+        HashCache {
+            hash: Cell::new(None),
+            value,
+        }
+    }
+}
+
+impl<T> Deref for HashCache<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T> DerefMut for HashCache<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // Invalidate the cached hash
+        self.hash.set(None);
+
+        &mut self.value
+    }
+}
+
+impl<T: Stashable> Stashable for HashCache<T> {
+    fn stash(&self, stasher: &mut Stasher) {
+        if stasher.hashing() {
+            // If hashing, look for a cached hash or compute
+            // and save it if not cached
+            let hash = match self.hash.get() {
+                Some(existing_hash) => existing_hash,
+                None => {
+                    let hash = ObjectHash::from_stashable(&self.value);
+                    self.hash.set(Some(hash));
+                    hash
+                }
+            };
+
+            stasher.u64(hash.0);
+        } else {
+            // Otherwise, if serializing, just serialize
+            self.deref().stash(stasher);
+        }
+    }
+}
+
+impl<T: Unstashable> Unstashable for HashCache<T> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
+        Ok(HashCache::new(T::unstash(unstasher)?))
+    }
+}
+
+impl<T: UnstashableInplace> UnstashableInplace for HashCache<T> {
+    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
+        self.deref_mut().unstash_inplace(unstasher)
+    }
+}
+
+/// HashCacheProperty is the cached result of a function call that is only
 /// evaluated lazily whenever the inputs have changed, according to their
 /// ObjectHash.
-pub struct HashCache<T> {
+pub struct HashCacheProperty<T> {
     /// The hash of the arguments for the cached value, if present
     hash: Option<ObjectHash>,
 
@@ -21,10 +102,10 @@ pub struct HashCache<T> {
     value: Option<T>,
 }
 
-impl<T> HashCache<T> {
-    /// Create a new RevisedProperty with an empty cache
-    pub fn new() -> HashCache<T> {
-        HashCache {
+impl<T> HashCacheProperty<T> {
+    /// Create a new HashCacheProperty with an empty cache
+    pub fn new() -> HashCacheProperty<T> {
+        HashCacheProperty {
             hash: None,
             value: None,
         }
