@@ -504,7 +504,7 @@ impl<T> StashHandle<T> {
     }
 
     /// Get the hash of the stashed object
-    pub(crate) fn object_hash(&self) -> ObjectHash {
+    pub fn object_hash(&self) -> ObjectHash {
         self.hash
     }
 
