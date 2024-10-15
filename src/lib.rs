@@ -540,3 +540,42 @@ impl<T> Drop for StashHandle<T> {
         map.remove_reference(self.hash);
     }
 }
+
+/// Stash an object and immediately unstash it out-of-place, effectively
+/// performing a deep clone of the object. This can be used where
+/// implementing Clone is difficult (e.g. involving trait objects and
+/// factories) and/or would duplicate logic already needed for stashing
+/// and unstashing.
+///
+/// On success, returns both the cloned object and a handle to its stashed
+/// data so that serialized contents can be reused if desired. The additional
+/// memory usage of this method is lowered if the provided stash already
+/// contains copies of sub-bojects being stashed.
+pub fn stash_clone<T>(object: &T, stash: &Stash) -> Result<(T, StashHandle<T>), UnstashError>
+where
+    T: Stashable + Unstashable,
+{
+    let handle = stash.stash(object);
+
+    match stash.unstash(&handle) {
+        Ok(new_obj) => Ok((new_obj, handle)),
+        Err(err) => Err(err),
+    }
+}
+
+pub fn stash_clone_proxy<T, F>(
+    object: &T,
+    stash: &Stash,
+    f: F,
+) -> Result<(T, StashHandle<T>), UnstashError>
+where
+    T: Stashable,
+    F: FnMut(&mut Unstasher) -> Result<T, UnstashError>,
+{
+    let handle = stash.stash(object);
+
+    match stash.unstash_proxy(&handle, f) {
+        Ok(new_obj) => Ok((new_obj, handle)),
+        Err(err) => Err(err),
+    }
+}
