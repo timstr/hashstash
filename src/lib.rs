@@ -82,7 +82,7 @@ pub struct ObjectHash(u64);
 
 impl ObjectHash {
     /// Create a new ObjectHash by hashing a Stashable object
-    pub fn from_stashable<T: Stashable>(object: &T) -> ObjectHash {
+    pub fn from_stashable<T: ?Sized + Stashable>(object: &T) -> ObjectHash {
         Self::with_stasher(|stasher| object.stash(stasher))
     }
 

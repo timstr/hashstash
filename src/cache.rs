@@ -21,7 +21,7 @@ fn combine_hashes(hashes: &[ObjectHash]) -> ObjectHash {
 /// the hash value of that object between repeated non-mutable
 /// accesses. Mutably accessing the stored object invalidates
 /// the cached hash value, which is only recomputed as needed.
-pub struct HashCache<T> {
+pub struct HashCache<T: ?Sized> {
     /// The cached hash
     hash: Cell<Option<ObjectHash>>,
 
@@ -40,7 +40,7 @@ impl<T> HashCache<T> {
     }
 }
 
-impl<T> Deref for HashCache<T> {
+impl<T: ?Sized> Deref for HashCache<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -48,7 +48,7 @@ impl<T> Deref for HashCache<T> {
     }
 }
 
-impl<T> DerefMut for HashCache<T> {
+impl<T: ?Sized> DerefMut for HashCache<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // Invalidate the cached hash
         self.hash.set(None);
@@ -57,7 +57,7 @@ impl<T> DerefMut for HashCache<T> {
     }
 }
 
-impl<T: Stashable> Stashable for HashCache<T> {
+impl<T: ?Sized + Stashable> Stashable for HashCache<T> {
     fn stash(&self, stasher: &mut Stasher) {
         if stasher.hashing() {
             // If hashing, look for a cached hash or compute
