@@ -34,9 +34,9 @@ impl Unstashable for StructA {
 
 impl UnstashableInplace for StructA {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
-        unstasher.i32(&mut self.i)?;
-        unstasher.u64(&mut self.x)?;
-        unstasher.string(&mut self.s)?;
+        unstasher.i32_inplace(&mut self.i)?;
+        unstasher.u64_inplace(&mut self.x)?;
+        unstasher.string_inplace(&mut self.s)?;
         Ok(())
     }
 }
@@ -265,9 +265,9 @@ impl Unstashable for StructB {
 impl UnstashableInplace for StructB {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
         unstasher.object_inplace(&mut self.a1)?;
-        unstasher.bool(&mut self.b)?;
+        unstasher.bool_inplace(&mut self.b)?;
         unstasher.object_inplace(&mut self.a2)?;
-        unstasher.u8(&mut self.u)?;
+        unstasher.u8_inplace(&mut self.u)?;
         unstasher.object_inplace(&mut self.a3)?;
         Ok(())
     }
@@ -443,8 +443,8 @@ impl Unstashable for StructWithVecs {
 
 impl UnstashableInplace for StructWithVecs {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
-        unstasher.array_of_i32_vec(&mut self.vec_i32)?;
-        unstasher.array_of_u8_vec(&mut self.vec_u8)?;
+        unstasher.array_of_i32_vec_inplace(&mut self.vec_i32)?;
+        unstasher.array_of_u8_vec_inplace(&mut self.vec_u8)?;
         Ok(())
     }
 }
@@ -532,7 +532,7 @@ impl Unstashable for StructWithVecOfObjects {
 
 impl UnstashableInplace for StructWithVecOfObjects {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
-        unstasher.array_of_objects_vec(&mut self.objects)?;
+        unstasher.array_of_objects_vec_inplace(&mut self.objects)?;
         Ok(())
     }
 }
@@ -694,7 +694,7 @@ impl UnstashableInplace for StructWithHashSetOfBasicObjects {
         let mut temp_vec = Vec::<StructA>::new();
         // NOTE: could also use array_of_proxy_objects but that
         // gets tested elsewhere
-        unstasher.array_of_objects_vec::<StructA>(&mut temp_vec)?;
+        unstasher.array_of_objects_vec_inplace::<StructA>(&mut temp_vec)?;
         if unstasher.time_to_write() {
             self.objects = temp_vec.into_iter().collect();
         }
@@ -853,7 +853,7 @@ impl Unstashable for StructWithWeirdContainer {
 impl UnstashableInplace for StructWithWeirdContainer {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
         let mut temp_objects: Vec<StructA> = Vec::new();
-        unstasher.array_of_objects_vec(&mut temp_objects)?;
+        unstasher.array_of_objects_vec_inplace(&mut temp_objects)?;
         if unstasher.time_to_write() {
             self.container.clear();
             for object in temp_objects {

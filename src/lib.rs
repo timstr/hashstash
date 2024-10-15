@@ -191,11 +191,11 @@ impl StashMap {
     /// phase.
     /// This method panics if there is not stashed object with the
     /// given hash.
-    fn unstash_inplace<'a, T: UnstashableInplace>(
+    fn unstash_inplace<'a, F: FnMut(&mut InplaceUnstasher) -> Result<(), UnstashError>>(
         &self,
         hash: ObjectHash,
-        object: &mut T,
         phase: InplaceUnstashPhase,
+        mut f: F,
     ) -> Result<(), UnstashError> {
         let stashed_object = self.objects.get(&hash).unwrap();
 
@@ -204,7 +204,7 @@ impl StashMap {
             phase,
         );
 
-        object.unstash_inplace(&mut unstasher)?;
+        f(&mut unstasher)?;
 
         if !unstasher.backend().is_finished() {
             return Err(UnstashError::NotFinished);
@@ -299,6 +299,18 @@ impl Stash {
         self.map.borrow().unstash(handle.hash, T::unstash)
     }
 
+    /// Unstash a new object to deserialize and recreate a previously-
+    /// stashed object with the given [StashHandle], but using a custom
+    /// function to do the unstashing. Use this if unstashing depends
+    /// on additional data that can't be passed through the existing
+    /// [Unstashable] interface.
+    pub fn unstash_proxy<T, F>(&self, handle: &StashHandle<T>, f: F) -> Result<T, UnstashError>
+    where
+        F: FnMut(&mut Unstasher) -> Result<T, UnstashError>,
+    {
+        self.map.borrow().unstash(handle.hash, f)
+    }
+
     /// Unstash an existing object to deserialize and restore the state
     /// of a previously stashed object, as represented by the given
     /// [StashHandle]. This method uses a two-phase approach to validate
@@ -314,8 +326,12 @@ impl Stash {
         object: &mut T,
     ) -> Result<(), UnstashError> {
         let map = self.map.borrow();
-        map.unstash_inplace(handle.hash, object, InplaceUnstashPhase::Validate)?;
-        map.unstash_inplace(handle.hash, object, InplaceUnstashPhase::Write)
+        map.unstash_inplace(handle.hash, InplaceUnstashPhase::Validate, |unstasher| {
+            object.unstash_inplace(unstasher)
+        })?;
+        map.unstash_inplace(handle.hash, InplaceUnstashPhase::Write, |unstasher| {
+            object.unstash_inplace(unstasher)
+        })
     }
 }
 
@@ -442,8 +458,8 @@ where
     let map = stash.map.borrow();
     map.unstash_inplace(
         handle_to_original.hash,
-        &mut object,
         InplaceUnstashPhase::Validate,
+        |unstasher| object.unstash_inplace(unstasher),
     )
     .map_err(|e| RoundTripError::BasicUnstashError(e))?;
 
@@ -454,8 +470,8 @@ where
 
     map.unstash_inplace(
         handle_to_original.hash,
-        &mut object,
         InplaceUnstashPhase::Write,
+        |unstasher| object.unstash_inplace(unstasher),
     )
     .map_err(|e| RoundTripError::UncaughtUnstashError(e))?;
 

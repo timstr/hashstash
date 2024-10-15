@@ -67,6 +67,7 @@ impl<'a, T: Unstashable> Iterator for ObjectIterator<'a, T> {
 }
 
 /// The backend for both an [Unstasher] and an [InplaceUnstasher]
+#[derive(Copy, Clone)]
 pub(crate) struct UnstasherBackend<'a> {
     bytes: &'a [u8],
     dependencies: &'a [ObjectHash],
@@ -164,10 +165,10 @@ impl<'a> UnstasherBackend<'a> {
         &mut self,
         f: F,
     ) -> Result<T, UnstashError> {
-        let original_bytes = self.bytes;
+        let original = self.clone();
         let result = f(self);
         if result.is_err() {
-            self.bytes = original_bytes;
+            *self = original;
         }
         result
     }
@@ -280,7 +281,9 @@ impl<'a> UnstasherBackend<'a> {
             }
 
             let hash = unstasher.read_dependency()?;
-            unstasher.stashmap.unstash_inplace(hash, object, phase)
+            unstasher
+                .stashmap
+                .unstash_inplace(hash, phase, |unstasher| object.unstash_inplace(unstasher))
         })
     }
 
@@ -296,6 +299,25 @@ impl<'a> UnstasherBackend<'a> {
 
             let hash = unstasher.read_dependency()?;
             unstasher.stashmap.unstash(hash, f)
+        })
+    }
+
+    /// Read a single object via a given function that receives an [InplaceUnstasher]
+    fn object_proxy_inplace<F>(
+        &mut self,
+        f: F,
+        phase: InplaceUnstashPhase,
+    ) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut InplaceUnstasher) -> Result<(), UnstashError>,
+    {
+        self.reset_on_error(|unstasher| {
+            if unstasher.read_value_type()? != ValueType::StashedObject {
+                return Err(UnstashError::WrongValueType);
+            }
+
+            let hash = unstasher.read_dependency()?;
+            unstasher.stashmap.unstash_inplace(hash, phase, f)
         })
     }
 
@@ -463,52 +485,52 @@ impl<'a> Unstasher<'a> {
     }
 
     /// Read an array of i8 values via an iterator
-    pub fn array_of_i8_iter(&mut self) -> Result<PrimitiveIterator<i8>, UnstashError> {
+    pub fn array_of_i8_iter(&mut self) -> Result<PrimitiveIterator<'a, i8>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of u8 values via an iterator
-    pub fn array_of_u8_iter(&mut self) -> Result<PrimitiveIterator<u8>, UnstashError> {
+    pub fn array_of_u8_iter(&mut self) -> Result<PrimitiveIterator<'a, u8>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of i16 values via an iterator
-    pub fn array_of_i16_iter(&mut self) -> Result<PrimitiveIterator<i16>, UnstashError> {
+    pub fn array_of_i16_iter(&mut self) -> Result<PrimitiveIterator<'a, i16>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of u16 values via an iterator
-    pub fn array_of_u16_iter(&mut self) -> Result<PrimitiveIterator<u16>, UnstashError> {
+    pub fn array_of_u16_iter(&mut self) -> Result<PrimitiveIterator<'a, u16>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of i32 values via an iterator
-    pub fn array_of_i32_iter(&mut self) -> Result<PrimitiveIterator<i32>, UnstashError> {
+    pub fn array_of_i32_iter(&mut self) -> Result<PrimitiveIterator<'a, i32>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of u32 values via an iterator
-    pub fn array_of_u32_iter(&mut self) -> Result<PrimitiveIterator<u32>, UnstashError> {
+    pub fn array_of_u32_iter(&mut self) -> Result<PrimitiveIterator<'a, u32>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of i64 values via an iterator
-    pub fn array_of_i64_iter(&mut self) -> Result<PrimitiveIterator<i64>, UnstashError> {
+    pub fn array_of_i64_iter(&mut self) -> Result<PrimitiveIterator<'a, i64>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of u64 values via an iterator
-    pub fn array_of_u64_iter(&mut self) -> Result<PrimitiveIterator<u64>, UnstashError> {
+    pub fn array_of_u64_iter(&mut self) -> Result<PrimitiveIterator<'a, u64>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of f32 values via an iterator
-    pub fn array_of_f32_iter(&mut self) -> Result<PrimitiveIterator<f32>, UnstashError> {
+    pub fn array_of_f32_iter(&mut self) -> Result<PrimitiveIterator<'a, f32>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
     /// Read an array of f64 values via an iterator
-    pub fn array_of_f64_iter(&mut self) -> Result<PrimitiveIterator<f64>, UnstashError> {
+    pub fn array_of_f64_iter(&mut self) -> Result<PrimitiveIterator<'a, f64>, UnstashError> {
         self.backend.read_primitive_array_iter()
     }
 
@@ -544,12 +566,42 @@ impl<'a> Unstasher<'a> {
         self.backend.object_proxy(T::unstash)
     }
 
+    /// Read a single [UnstashableInplace] object
+    pub fn object_inplace<T: UnstashableInplace>(
+        &mut self,
+        object: &mut T,
+    ) -> Result<(), UnstashError> {
+        let backend_original = self.backend.clone();
+        self.backend
+            .object_inplace(object, InplaceUnstashPhase::Validate)?;
+        self.backend = backend_original;
+        self.backend
+            .object_inplace(object, InplaceUnstashPhase::Write)
+    }
+
     /// Read a single object via a function receiving an [Unstasher]
     pub fn object_proxy<T: 'static, F>(&mut self, f: F) -> Result<T, UnstashError>
     where
         F: FnMut(&mut Unstasher) -> Result<T, UnstashError>,
     {
         self.backend.object_proxy(f)
+    }
+
+    /// Read a single object via a function receiving an [InplaceUnstasher].
+    /// The function is called twice, once to validate and once to write.
+    /// No lasting changes should be made unless [InplaceUnstasher::time_to_write]
+    /// returns true. Data should always be read to catch unstashing errors
+    /// during the validation phase, before persistent changes are made.
+    pub fn object_proxy_inplace<F>(&mut self, mut f: F) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut InplaceUnstasher) -> Result<(), UnstashError>,
+    {
+        let backend_original = self.backend.clone();
+        self.backend
+            .object_proxy_inplace(&mut f, InplaceUnstashPhase::Validate)?;
+        self.backend = backend_original;
+        self.backend
+            .object_proxy_inplace(&mut f, InplaceUnstashPhase::Write)
     }
 
     /// Get the type of the next value, if one exists
@@ -606,7 +658,7 @@ impl<'a> InplaceUnstasher<'a> {
 
     /// Read a single primitive. The reference is only written
     /// to during the Write phase.
-    fn read_primitive<T: 'static + PrimitiveReadWrite>(
+    fn read_primitive_inplace<T: 'static + PrimitiveReadWrite>(
         &mut self,
         x: &mut T,
     ) -> Result<(), UnstashError> {
@@ -619,7 +671,7 @@ impl<'a> InplaceUnstasher<'a> {
 
     /// Read an array of primitives to a vector. The reference is
     /// only written to during the Write phase.
-    fn read_primitive_array_vec<T: 'static + PrimitiveReadWrite>(
+    fn read_primitive_array_vec_inplace<T: 'static + PrimitiveReadWrite>(
         &mut self,
         v: &mut Vec<T>,
     ) -> Result<(), UnstashError> {
@@ -634,128 +686,205 @@ impl<'a> InplaceUnstasher<'a> {
 impl<'a> InplaceUnstasher<'a> {
     /// Read a single bool value. The reference is only written
     /// to during the Write phase.
-    pub fn bool(&mut self, x: &mut bool) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn bool_inplace(&mut self, x: &mut bool) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single u8 value. The reference is only written
     /// to during the Write phase.
-    pub fn u8(&mut self, x: &mut u8) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn u8_inplace(&mut self, x: &mut u8) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single i8 value. The reference is only written
     /// to during the Write phase.
-    pub fn i8(&mut self, x: &mut i8) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn i8_inplace(&mut self, x: &mut i8) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single u16 value. The reference is only written
     /// to during the Write phase.
-    pub fn u16(&mut self, x: &mut u16) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn u16_inplace(&mut self, x: &mut u16) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single i16 value. The reference is only written
     /// to during the Write phase.
-    pub fn i16(&mut self, x: &mut i16) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn i16_inplace(&mut self, x: &mut i16) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single u32 value. The reference is only written
     /// to during the Write phase.
-    pub fn u32(&mut self, x: &mut u32) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn u32_inplace(&mut self, x: &mut u32) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single i32 value. The reference is only written
     /// to during the Write phase.
-    pub fn i32(&mut self, x: &mut i32) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn i32_inplace(&mut self, x: &mut i32) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single u64 value. The reference is only written
     /// to during the Write phase.
-    pub fn u64(&mut self, x: &mut u64) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn u64_inplace(&mut self, x: &mut u64) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single i64 value. The reference is only written
     /// to during the Write phase.
-    pub fn i64(&mut self, x: &mut i64) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn i64_inplace(&mut self, x: &mut i64) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single f32 value. The reference is only written
     /// to during the Write phase.
-    pub fn f32(&mut self, x: &mut f32) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn f32_inplace(&mut self, x: &mut f32) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
     }
 
     /// Read a single f64 value. The reference is only written
     /// to during the Write phase.
-    pub fn f64(&mut self, x: &mut f64) -> Result<(), UnstashError> {
-        self.read_primitive(x)
+    pub fn f64_inplace(&mut self, x: &mut f64) -> Result<(), UnstashError> {
+        self.read_primitive_inplace(x)
+    }
+
+    /// Read a single bool value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn bool_always(&mut self) -> Result<bool, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single u8 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn u8_always(&mut self) -> Result<u8, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single i8 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn i8_always(&mut self) -> Result<i8, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single u16 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn u16_always(&mut self) -> Result<u16, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single i16 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn i16_always(&mut self) -> Result<i16, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single u32 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn u32_always(&mut self) -> Result<u32, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single i32 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn i32_always(&mut self) -> Result<i32, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single u64 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn u64_always(&mut self) -> Result<u64, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single i64 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn i64_always(&mut self) -> Result<i64, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single f32 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn f32_always(&mut self) -> Result<f32, UnstashError> {
+        self.backend.read_primitive()
+    }
+
+    /// Read a single f64 value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn f64_always(&mut self) -> Result<f64, UnstashError> {
+        self.backend.read_primitive()
     }
 
     /// Read an array of u8 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_u8_vec(&mut self, x: &mut Vec<u8>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_u8_vec_inplace(&mut self, x: &mut Vec<u8>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of i8 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_i8_vec(&mut self, x: &mut Vec<i8>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_i8_vec_inplace(&mut self, x: &mut Vec<i8>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of u16 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_u16_vec(&mut self, x: &mut Vec<u16>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_u16_vec_inplace(&mut self, x: &mut Vec<u16>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of i16 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_i16_vec(&mut self, x: &mut Vec<i16>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_i16_vec_inplace(&mut self, x: &mut Vec<i16>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of u32 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_u32_vec(&mut self, x: &mut Vec<u32>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_u32_vec_inplace(&mut self, x: &mut Vec<u32>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of i32 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_i32_vec(&mut self, x: &mut Vec<i32>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_i32_vec_inplace(&mut self, x: &mut Vec<i32>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of u64 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_u64_vec(&mut self, x: &mut Vec<u64>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_u64_vec_inplace(&mut self, x: &mut Vec<u64>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of i64 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_i64_vec(&mut self, x: &mut Vec<i64>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_i64_vec_inplace(&mut self, x: &mut Vec<i64>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of f32 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_f32_vec(&mut self, x: &mut Vec<f32>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_f32_vec_inplace(&mut self, x: &mut Vec<f32>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of f64 values into a Vec. The reference is only written
     /// to during the Write phase. Existing contents are completely overwritten.
-    pub fn array_of_f64_vec(&mut self, x: &mut Vec<f64>) -> Result<(), UnstashError> {
-        self.read_primitive_array_vec(x)
+    pub fn array_of_f64_vec_inplace(&mut self, x: &mut Vec<f64>) -> Result<(), UnstashError> {
+        self.read_primitive_array_vec_inplace(x)
     }
 
     /// Read an array of [Unstashable] objects into a Vec. The reference is
@@ -765,7 +894,7 @@ impl<'a> InplaceUnstasher<'a> {
     /// If you need to work with a different container or need more fine-grained
     /// control over how objects are written to, use [Self::array_of_proxy_objects]
     /// instead.
-    pub fn array_of_objects_vec<T: 'static + Unstashable>(
+    pub fn array_of_objects_vec_inplace<T: 'static + Unstashable>(
         &mut self,
         x: &mut Vec<T>,
     ) -> Result<(), UnstashError> {
@@ -776,16 +905,85 @@ impl<'a> InplaceUnstasher<'a> {
         Ok(())
     }
 
+    /// Read an array of u8 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_u8_iter(&mut self) -> Result<PrimitiveIterator<'a, u8>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of i8 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_i8_iter(&mut self) -> Result<PrimitiveIterator<'a, i8>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of u16 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_u16_iter(&mut self) -> Result<PrimitiveIterator<'a, u16>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of i16 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_i16_iter(&mut self) -> Result<PrimitiveIterator<'a, i16>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of u32 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_u32_iter(&mut self) -> Result<PrimitiveIterator<'a, u32>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of i32 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_i32_iter(&mut self) -> Result<PrimitiveIterator<'a, i32>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of u64 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_u64_iter(&mut self) -> Result<PrimitiveIterator<'a, u64>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of i64 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_i64_iter(&mut self) -> Result<PrimitiveIterator<'a, i64>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of f32 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_f32_iter(&mut self) -> Result<PrimitiveIterator<'a, f32>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
+    /// Read an array of f64 values via an iterator.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn array_of_f64_iter(&mut self) -> Result<PrimitiveIterator<'a, f64>, UnstashError> {
+        self.backend.read_primitive_array_iter()
+    }
+
     /// Read an array of objects and visit each with the given function that receives
     /// an [Unstasher] instance. This can be used to interface with more general kinds
     /// of containers and data structures at the cost of needing to know more about
     /// the underlying Validation and Write phases.
     ///
-    /// To use this method correctly, objects should always be read and unstashed,
+    /// To use this method correctly, data should always be read and unstashed,
     /// but actual modifications to data structures should only be done during the
-    /// `Write` phase when `self.phase() == InplaceUnstashPhase::Write`. Failure to
-    /// do so may result in objects being left in unexpected states or duplicated
-    /// modifications.
+    /// `Write` phase when [Self::time_to_write] returns true. Failure to do so may
+    /// result in objects being left in unexpected states or duplicated modifications.
     ///
     /// See [crate::test_stash_roundtrip_inplace] for a way to automatically test
     /// whether this method is being used correctly.
@@ -798,12 +996,19 @@ impl<'a> InplaceUnstasher<'a> {
 
     /// Read a string. The reference is only written to during the Write phase.
     /// Existing contents are completely overwritten.
-    pub fn string(&mut self, x: &mut String) -> Result<(), UnstashError> {
+    pub fn string_inplace(&mut self, x: &mut String) -> Result<(), UnstashError> {
         let s = self.backend.string()?;
         if self.phase == InplaceUnstashPhase::Write {
             *x = s;
         }
         Ok(())
+    }
+
+    /// Read a string and return it directly, during both the validation
+    /// and write phases. Lasting changes should only be made when
+    /// [Self::time_to_write] is true.
+    pub fn string_always(&mut self) -> Result<String, UnstashError> {
+        self.backend.string()
     }
 
     /// Read an object which is [Unstashable]. The reference is only written to
@@ -815,6 +1020,13 @@ impl<'a> InplaceUnstasher<'a> {
             *object = other_object;
         }
         Ok(())
+    }
+
+    /// Read an object which is [Unstashable] and return it directly, during
+    /// both the validation and write phases. Lasting changes should only be
+    /// made when /// [Self::time_to_write] is true.
+    pub fn object_always<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
+        self.backend.object_proxy(T::unstash)
     }
 
     /// Read an object which is [UnstashableInplace]. The given reference is
@@ -833,9 +1045,8 @@ impl<'a> InplaceUnstasher<'a> {
     ///
     /// To use this method correctly, objects should always be read and unstashed,
     /// but actual modifications to data structures should only be done during the
-    /// `Write` phase when `self.phase() == InplaceUnstashPhase::Write`. Failure to
-    /// do so may result in objects being left in unexpected states or duplicated
-    /// modifications.
+    /// `Write` phase when [Self::time_to_write] returns `true`. Failure to do so may
+    /// result in objects being left in unexpected states or duplicated modifications.
     ///
     /// See [crate::test_stash_roundtrip_inplace] for a way to automatically test
     /// whether this method is being used correctly.
@@ -844,6 +1055,13 @@ impl<'a> InplaceUnstasher<'a> {
         F: FnMut(&mut Unstasher) -> Result<R, UnstashError>,
     {
         self.backend.object_proxy(f)
+    }
+
+    pub fn object_proxy_inplace<F>(&mut self, f: F) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut InplaceUnstasher) -> Result<(), UnstashError>,
+    {
+        self.backend.object_proxy_inplace(f, self.phase)
     }
 
     /// Are we in the write phase, i.e. should lasting changes be made to the
