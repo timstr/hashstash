@@ -58,14 +58,17 @@ impl<T: ?Sized> DerefMut for HashCache<T> {
 }
 
 impl<T: ?Sized + Stashable> Stashable for HashCache<T> {
-    fn stash(&self, stasher: &mut Stasher) {
+    type Context = T::Context;
+
+    fn stash(&self, stasher: &mut Stasher<Self::Context>) {
         if stasher.hashing() {
             // If hashing, look for a cached hash or compute
             // and save it if not cached
             let hash = match self.hash.get() {
                 Some(existing_hash) => existing_hash,
                 None => {
-                    let hash = ObjectHash::from_stashable(&self.value);
+                    let hash =
+                        ObjectHash::from_stashable_and_context(&self.value, stasher.context());
                     self.hash.set(Some(hash));
                     hash
                 }
@@ -126,9 +129,17 @@ impl<T> HashCacheProperty<T> {
     pub fn refresh1<F, A0>(&mut self, f: F, arg0: A0)
     where
         F: Fn(A0) -> T,
-        A0: Stashable,
+        A0: Stashable<Context = ()>,
     {
-        let current_hash = ObjectHash::from_stashable(&arg0);
+        self.refresh1_with_context(f, arg0, &());
+    }
+
+    pub fn refresh1_with_context<Context, F, A0>(&mut self, f: F, arg0: A0, context: &Context)
+    where
+        F: Fn(A0) -> T,
+        A0: Stashable<Context = Context>,
+    {
+        let current_hash = ObjectHash::from_stashable_and_context(&arg0, context);
         if self.hash != Some(current_hash) {
             self.value = Some(f(arg0));
             self.hash = Some(current_hash);
@@ -143,12 +154,26 @@ impl<T> HashCacheProperty<T> {
     pub fn refresh2<F, A0, A1>(&mut self, f: F, arg0: A0, arg1: A1)
     where
         F: Fn(A0, A1) -> T,
-        A0: Stashable,
-        A1: Stashable,
+        A0: Stashable<Context = ()>,
+        A1: Stashable<Context = ()>,
+    {
+        self.refresh2_with_context(f, arg0, arg1, &());
+    }
+
+    pub fn refresh2_with_context<Context, F, A0, A1>(
+        &mut self,
+        f: F,
+        arg0: A0,
+        arg1: A1,
+        context: &Context,
+    ) where
+        F: Fn(A0, A1) -> T,
+        A0: Stashable<Context = Context>,
+        A1: Stashable<Context = Context>,
     {
         let current_revision = combine_hashes(&[
-            ObjectHash::from_stashable(&arg0),
-            ObjectHash::from_stashable(&arg1),
+            ObjectHash::from_stashable_and_context(&arg0, context),
+            ObjectHash::from_stashable_and_context(&arg1, context),
         ]);
         if self.hash != Some(current_revision) {
             self.value = Some(f(arg0, arg1));
@@ -164,14 +189,30 @@ impl<T> HashCacheProperty<T> {
     pub fn refresh3<F, A0, A1, A2>(&mut self, f: F, arg0: A0, arg1: A1, arg2: A2)
     where
         F: Fn(A0, A1, A2) -> T,
-        A0: Stashable,
-        A1: Stashable,
-        A2: Stashable,
+        A0: Stashable<Context = ()>,
+        A1: Stashable<Context = ()>,
+        A2: Stashable<Context = ()>,
+    {
+        self.refresh3_with_context(f, arg0, arg1, arg2, &());
+    }
+
+    pub fn refresh3_with_context<Context, F, A0, A1, A2>(
+        &mut self,
+        f: F,
+        arg0: A0,
+        arg1: A1,
+        arg2: A2,
+        context: &Context,
+    ) where
+        F: Fn(A0, A1, A2) -> T,
+        A0: Stashable<Context = Context>,
+        A1: Stashable<Context = Context>,
+        A2: Stashable<Context = Context>,
     {
         let current_revision = combine_hashes(&[
-            ObjectHash::from_stashable(&arg0),
-            ObjectHash::from_stashable(&arg1),
-            ObjectHash::from_stashable(&arg2),
+            ObjectHash::from_stashable_and_context(&arg0, context),
+            ObjectHash::from_stashable_and_context(&arg1, context),
+            ObjectHash::from_stashable_and_context(&arg2, context),
         ]);
         if self.hash != Some(current_revision) {
             self.value = Some(f(arg0, arg1, arg2));
@@ -187,16 +228,34 @@ impl<T> HashCacheProperty<T> {
     pub fn refresh4<F, A0, A1, A2, A3>(&mut self, f: F, arg0: A0, arg1: A1, arg2: A2, arg3: A3)
     where
         F: Fn(A0, A1, A2, A3) -> T,
-        A0: Stashable,
-        A1: Stashable,
-        A2: Stashable,
-        A3: Stashable,
+        A0: Stashable<Context = ()>,
+        A1: Stashable<Context = ()>,
+        A2: Stashable<Context = ()>,
+        A3: Stashable<Context = ()>,
+    {
+        self.refresh4_with_context(f, arg0, arg1, arg2, arg3, &());
+    }
+
+    pub fn refresh4_with_context<Context, F, A0, A1, A2, A3>(
+        &mut self,
+        f: F,
+        arg0: A0,
+        arg1: A1,
+        arg2: A2,
+        arg3: A3,
+        context: &Context,
+    ) where
+        F: Fn(A0, A1, A2, A3) -> T,
+        A0: Stashable<Context = Context>,
+        A1: Stashable<Context = Context>,
+        A2: Stashable<Context = Context>,
+        A3: Stashable<Context = Context>,
     {
         let current_revision = combine_hashes(&[
-            ObjectHash::from_stashable(&arg0),
-            ObjectHash::from_stashable(&arg1),
-            ObjectHash::from_stashable(&arg2),
-            ObjectHash::from_stashable(&arg3),
+            ObjectHash::from_stashable_and_context(&arg0, context),
+            ObjectHash::from_stashable_and_context(&arg1, context),
+            ObjectHash::from_stashable_and_context(&arg2, context),
+            ObjectHash::from_stashable_and_context(&arg3, context),
         ]);
         if self.hash != Some(current_revision) {
             self.value = Some(f(arg0, arg1, arg2, arg3));
@@ -219,18 +278,38 @@ impl<T> HashCacheProperty<T> {
         arg4: A4,
     ) where
         F: Fn(A0, A1, A2, A3, A4) -> T,
-        A0: Stashable,
-        A1: Stashable,
-        A2: Stashable,
-        A3: Stashable,
-        A4: Stashable,
+        A0: Stashable<Context = ()>,
+        A1: Stashable<Context = ()>,
+        A2: Stashable<Context = ()>,
+        A3: Stashable<Context = ()>,
+        A4: Stashable<Context = ()>,
+    {
+        self.refresh5_with_context(f, arg0, arg1, arg2, arg3, arg4, &());
+    }
+
+    pub fn refresh5_with_context<Context, F, A0, A1, A2, A3, A4>(
+        &mut self,
+        f: F,
+        arg0: A0,
+        arg1: A1,
+        arg2: A2,
+        arg3: A3,
+        arg4: A4,
+        context: &Context,
+    ) where
+        F: Fn(A0, A1, A2, A3, A4) -> T,
+        A0: Stashable<Context = Context>,
+        A1: Stashable<Context = Context>,
+        A2: Stashable<Context = Context>,
+        A3: Stashable<Context = Context>,
+        A4: Stashable<Context = Context>,
     {
         let current_revision = combine_hashes(&[
-            ObjectHash::from_stashable(&arg0),
-            ObjectHash::from_stashable(&arg1),
-            ObjectHash::from_stashable(&arg2),
-            ObjectHash::from_stashable(&arg3),
-            ObjectHash::from_stashable(&arg4),
+            ObjectHash::from_stashable_and_context(&arg0, context),
+            ObjectHash::from_stashable_and_context(&arg1, context),
+            ObjectHash::from_stashable_and_context(&arg2, context),
+            ObjectHash::from_stashable_and_context(&arg3, context),
+            ObjectHash::from_stashable_and_context(&arg4, context),
         ]);
         if self.hash != Some(current_revision) {
             self.value = Some(f(arg0, arg1, arg2, arg3, arg4));

@@ -15,6 +15,8 @@ struct StructA {
 }
 
 impl Stashable for StructA {
+    type Context = ();
+
     fn stash(&self, stasher: &mut Stasher) {
         stasher.i32(self.i);
         stasher.u64(self.x);
@@ -172,6 +174,7 @@ fn test_basic_struct_changing() {
 struct StructAProxy(StructA);
 
 impl Stashable for StructAProxy {
+    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.object_proxy(|stasher| {
             stasher.i32(self.0.i);
@@ -241,6 +244,7 @@ struct StructB {
 }
 
 impl Stashable for StructB {
+    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.object(&self.a1);
         stasher.bool(self.b);
@@ -371,12 +375,21 @@ fn test_roundtrip_nested() {
         s.s.push('z');
     };
 
-    assert_eq!(test_stash_roundtrip(create_a, modify_a_i), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_a, modify_a_x), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_a, modify_a_s), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_a, modify_a_i), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_a, modify_a_x), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_a, modify_a_s), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_i, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_x, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_s, &()), Ok(()));
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_a, modify_a_i, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_a, modify_a_x, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_a, modify_a_s, &()),
+        Ok(())
+    );
 
     let make_b = || StructB {
         a1: StructA {
@@ -408,16 +421,31 @@ fn test_roundtrip_nested() {
     let modify_b_a2 = |s: &mut StructB| s.a2.x ^= 0b101;
     let modify_b_a3 = |s: &mut StructB| s.a3.s.push_str("blah");
 
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_b), Ok(()));
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_u), Ok(()));
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_a1), Ok(()));
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_a2), Ok(()));
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_a3), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_b), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_u), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_a1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_a2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(make_b, modify_b_a3), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_b, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_u, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a3, &()), Ok(()));
+    assert_eq!(
+        test_stash_roundtrip_inplace(make_b, modify_b_b, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(make_b, modify_b_u, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(make_b, modify_b_a1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(make_b, modify_b_a2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(make_b, modify_b_a3, &()),
+        Ok(())
+    );
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -427,6 +455,7 @@ struct StructWithVecs {
 }
 
 impl Stashable for StructWithVecs {
+    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.array_of_i32_slice(&self.vec_i32);
         stasher.array_of_u8_iter(self.vec_u8.iter().cloned());
@@ -490,25 +519,52 @@ fn test_roundtrip_struct_with_vecs() {
     let modify_2 = |s: &mut StructWithVecs| s.vec_i32.push(99);
     let modify_3 = |s: &mut StructWithVecs| s.vec_u8.extend_from_slice(&[1, 2, 3]);
 
-    assert_eq!(test_stash_roundtrip(create_1, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_1, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_1, modify_3), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_3), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_3), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_3, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_3, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_3, &()), Ok(()));
 
-    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_3), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_3), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_3), Ok(()));
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_1, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_1, modify_2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_1, modify_3, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_2, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_2, modify_2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_2, modify_3, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_3, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_3, modify_2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_3, modify_3, &()),
+        Ok(())
+    );
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -517,6 +573,7 @@ struct StructWithVecOfObjects {
 }
 
 impl Stashable for StructWithVecOfObjects {
+    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.array_of_objects_slice(&self.objects, Order::Ordered);
     }
@@ -649,23 +706,47 @@ fn test_roundtrip_vec_of_objects() {
         s.objects.reverse();
     };
 
-    assert_eq!(test_stash_roundtrip(create_1, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_4, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_1, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_4, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_4, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_4, modify_2, &()), Ok(()));
 
-    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_4, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_4, modify_2), Ok(()));
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_1, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_2, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_3, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_4, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_1, modify_2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_2, modify_2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_3, modify_2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_4, modify_2, &()),
+        Ok(())
+    );
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -674,6 +755,7 @@ struct StructWithHashSetOfBasicObjects {
 }
 
 impl Stashable for StructWithHashSetOfBasicObjects {
+    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.array_of_objects_iter(self.objects.iter(), Order::Unordered);
     }
@@ -771,12 +853,12 @@ fn test_roundtrip_hashset_of_basic_objects() {
         s.objects.retain(|a| a.i % 2 == 0);
     };
 
-    assert_eq!(test_stash_roundtrip(create, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create, modify_3), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create, modify_3), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_3, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create, modify_3, &()), Ok(()));
 }
 
 struct WeirdContainer<T> {
@@ -835,6 +917,7 @@ struct StructWithWeirdContainer {
 }
 
 impl Stashable for StructWithWeirdContainer {
+    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.array_of_objects_iter(self.container.items(), Order::Unordered);
     }
@@ -905,12 +988,12 @@ fn test_roundtrip_weird_container() {
         s.container.foreach_mut(|a| a.x *= 2);
     };
 
-    assert_eq!(test_stash_roundtrip(create, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create, modify_3), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create, modify_3), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_3, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip_inplace(create, modify_3, &()), Ok(()));
 }
 
 struct GraphNode {
@@ -970,6 +1053,7 @@ impl Graph {
 }
 
 impl Stashable for Graph {
+    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         // nodes
         stasher.array_of_proxy_objects(
@@ -1116,17 +1200,35 @@ fn test_graph_roundtrip() {
         }
     };
 
-    assert_eq!(test_stash_roundtrip(create_1, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_1, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_2), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_1, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_2, &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_2, &()), Ok(()));
 
-    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_1), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_1, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_2, modify_2), Ok(()));
-    assert_eq!(test_stash_roundtrip_inplace(create_3, modify_2), Ok(()));
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_1, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_2, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_3, modify_1, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_1, modify_2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_2, modify_2, &()),
+        Ok(())
+    );
+    assert_eq!(
+        test_stash_roundtrip_inplace(create_3, modify_2, &()),
+        Ok(())
+    );
 }

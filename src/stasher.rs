@@ -50,17 +50,21 @@ impl<'a> StasherBackend<'a> {
     /// Stash and track a dependency. When hashing, this simply
     /// hashes the object. When serializing, this stashes the
     /// object in the stashmap and adds a reference to it.
-    fn stash_dependency<F: FnMut(&mut Stasher)>(&mut self, f: F) {
+    fn stash_dependency<OtherContext, F: FnMut(&mut Stasher<'_, OtherContext>)>(
+        &mut self,
+        f: F,
+        context: &OtherContext,
+    ) {
         match self {
             StasherBackend::Hash(hasher) => {
-                let hash = ObjectHash::with_stasher(f);
+                let hash = ObjectHash::with_stasher_and_context(f, context);
                 match hasher.current_unordered_hash.as_mut() {
                     Some(unorderd_hash) => *unorderd_hash ^= hash.0,
                     None => hasher.hasher.write_u64(hash.0),
                 }
             }
             StasherBackend::Serialize(serializer) => {
-                let hash = serializer.stashmap.stash_and_add_reference(f);
+                let hash = serializer.stashmap.stash_and_add_reference(f, context);
                 serializer.dependencies.push(hash);
             }
         }
@@ -117,34 +121,41 @@ impl<'a> StasherBackend<'a> {
 /// A stasher is used to visit the contents of an object as part of its
 /// [Stashable::stash] implementation, interchangeably to both hash and
 /// to serialize those contents.
-pub struct Stasher<'a> {
+pub struct Stasher<'a, Context = ()> {
     backend: StasherBackend<'a>,
+    context: &'a Context,
 }
 
 /// Private methods
-impl<'a> Stasher<'a> {
+impl<'a, Context> Stasher<'a, Context> {
     /// Create a new Stasher for serializing
     pub(crate) fn new_serializer(
         data: &'a mut Vec<u8>,
         dependencies: &'a mut Vec<ObjectHash>,
         stashmap: &'a mut StashMap,
-    ) -> Stasher<'a> {
+        context: &'a Context,
+    ) -> Stasher<'a, Context> {
         Stasher {
             backend: StasherBackend::Serialize(SerializingStasher {
                 data,
                 dependencies,
                 stashmap,
             }),
+            context,
         }
     }
 
     /// Create a new Stasher for hashing
-    pub(crate) fn new_hasher(hasher: &'a mut seahash::SeaHasher) -> Stasher<'a> {
+    pub(crate) fn new_hasher(
+        hasher: &'a mut seahash::SeaHasher,
+        context: &'a Context,
+    ) -> Stasher<'a, Context> {
         Stasher {
             backend: StasherBackend::Hash(HashingStasher {
                 hasher,
                 current_unordered_hash: None,
             }),
+            context,
         }
     }
 
@@ -182,7 +193,7 @@ impl<'a> Stasher<'a> {
 }
 
 /// Public methods
-impl<'a> Stasher<'a> {
+impl<'a, Context> Stasher<'a, Context> {
     /// Write a single bool value
     pub fn bool(&mut self, x: bool) {
         self.write_primitive::<bool>(x);
@@ -339,31 +350,71 @@ impl<'a> Stasher<'a> {
     }
 
     /// Write a single [Stashable] object
-    pub fn object<T: Stashable>(&mut self, object: &T) {
+    pub fn object<T: Stashable<Context = Context>>(&mut self, object: &T) {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
         self.backend
-            .stash_dependency(|stasher| object.stash(stasher));
+            .stash_dependency(|stasher| object.stash(stasher), self.context);
+    }
+
+    pub fn object_with_context<T: Stashable>(&mut self, object: &T, context: &T::Context) {
+        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
+        self.backend
+            .stash_dependency(|stasher| object.stash(stasher), context);
     }
 
     /// Write a single object via a function receiving a [Stasher].
     pub fn object_proxy<F>(&mut self, f: F)
     where
-        F: FnMut(&mut Stasher),
+        F: FnMut(&mut Stasher<'_, Context>),
     {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        self.backend.stash_dependency(f);
+        self.backend.stash_dependency(f, self.context);
+    }
+
+    pub fn object_proxy_with_context<OtherContext, F>(&mut self, f: F, context: &OtherContext)
+    where
+        F: FnMut(&mut Stasher<'_, OtherContext>),
+    {
+        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
+        self.backend.stash_dependency(f, context);
     }
 
     /// Write an array of [Stashable] objects from a slice
-    pub fn array_of_objects_slice<T: Stashable>(&mut self, objects: &[T], order: Order) {
-        self.array_of_objects_iter(objects.iter(), order);
+    pub fn array_of_objects_slice<T: Stashable<Context = Context>>(
+        &mut self,
+        objects: &[T],
+        order: Order,
+    ) {
+        self.array_of_objects_iter_with_context(objects.iter(), order, self.context);
+    }
+
+    pub fn array_of_objects_slice_with_context<T: Stashable>(
+        &mut self,
+        objects: &[T],
+        order: Order,
+        context: &T::Context,
+    ) {
+        self.array_of_objects_iter_with_context(objects.iter(), order, context);
     }
 
     /// Write an array of [Stashable] objects from an iterator
-    pub fn array_of_objects_iter<'b, T: 'b + Stashable, I: Iterator<Item = &'b T>>(
+    pub fn array_of_objects_iter<
+        'b,
+        T: 'b + Stashable<Context = Context>,
+        I: Iterator<Item = &'b T>,
+    >(
         &mut self,
         it: I,
         order: Order,
+    ) {
+        self.array_of_objects_iter_with_context(it, order, self.context);
+    }
+
+    pub fn array_of_objects_iter_with_context<'b, T: 'b + Stashable, I: Iterator<Item = &'b T>>(
+        &mut self,
+        it: I,
+        order: Order,
+        context: &T::Context,
     ) {
         self.backend
             .write_raw_bytes(&[ValueType::ArrayOfObjects.to_byte()]);
@@ -371,7 +422,7 @@ impl<'a> Stasher<'a> {
         let mut length: u32 = 0;
         for object in it {
             self.backend
-                .stash_dependency(|stasher| object.stash(stasher));
+                .stash_dependency(|stasher| object.stash(stasher), context);
             length += 1;
         }
         self.backend.end_sequence(bookmark, length);
@@ -379,21 +430,31 @@ impl<'a> Stasher<'a> {
 
     /// Write an array of objects from an intermediate iterator and function
     /// which stashes each item's contents.
-    pub fn array_of_proxy_objects<T, I: Iterator<Item = T>, F>(
+    pub fn array_of_proxy_objects<T, I: Iterator<Item = T>, F>(&mut self, it: I, f: F, order: Order)
+    where
+        F: FnMut(&T, &mut Stasher<'_, Context>),
+    {
+        self.array_of_proxy_objects_with_context(it, f, order, self.context);
+    }
+
+    pub fn array_of_proxy_objects_with_context<OtherContext, T, I: Iterator<Item = T>, F>(
         &mut self,
         it: I,
         mut f: F,
         order: Order,
+        context: &OtherContext,
     ) where
-        F: FnMut(&T, &mut Stasher),
+        F: FnMut(&T, &mut Stasher<'_, OtherContext>),
     {
         self.backend
             .write_raw_bytes(&[ValueType::ArrayOfObjects.to_byte()]);
         let bookmark = self.backend.begin_sequence(order);
         let mut length: u32 = 0;
         for object in it {
-            self.backend
-                .stash_dependency(|stasher: &mut Stasher| f(&object, stasher));
+            self.backend.stash_dependency(
+                |stasher: &mut Stasher<'_, OtherContext>| f(&object, stasher),
+                context,
+            );
             length += 1;
         }
         self.backend.end_sequence(bookmark, length);
@@ -406,5 +467,9 @@ impl<'a> Stasher<'a> {
         let bytes = x.as_bytes();
         self.write_raw_bytes(bytes);
         self.backend.end_sequence(bookmark, bytes.len() as u32);
+    }
+
+    pub fn context(&self) -> &'a Context {
+        self.context
     }
 }

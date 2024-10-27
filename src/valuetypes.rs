@@ -108,7 +108,7 @@ pub(crate) trait PrimitiveReadWrite {
     const TYPE: PrimitiveType;
 
     /// Write self to the byte vector
-    fn write_raw_bytes_to(&self, stasher: &mut Stasher);
+    fn write_raw_bytes_to<Context>(&self, stasher: &mut Stasher<Context>);
 
     /// Read self from the byte slice, moving it forward.
     /// This method may panic if there are fewer than Self::SIZE bytes remaining
@@ -124,7 +124,7 @@ macro_rules! impl_primitive_read_write {
         impl PrimitiveReadWrite for $primitive {
             const SIZE: usize = $size;
             const TYPE: PrimitiveType = $typetag;
-            fn write_raw_bytes_to(&self, stasher: &mut Stasher) {
+            fn write_raw_bytes_to<Context>(&self, stasher: &mut Stasher<Context>) {
                 stasher.write_raw_bytes(&self.to_be_bytes());
             }
             fn read_raw_bytes_from(bytes: &mut &[u8]) -> Self {
@@ -153,7 +153,7 @@ impl PrimitiveReadWrite for bool {
     const SIZE: usize = 1;
     const TYPE: PrimitiveType = PrimitiveType::Bool;
 
-    fn write_raw_bytes_to(&self, stasher: &mut Stasher) {
+    fn write_raw_bytes_to<Context>(&self, stasher: &mut Stasher<Context>) {
         stasher.write_raw_bytes(&[if *self { 1 } else { 0 }]);
     }
 

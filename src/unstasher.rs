@@ -1014,7 +1014,10 @@ impl<'a> InplaceUnstasher<'a> {
     /// Read an object which is [Unstashable]. The reference is only written to
     /// during the Write phase. The existing object is completely overwritten
     /// with the newly-unstashed object.
-    pub fn object<T: 'static + Unstashable>(&mut self, object: &mut T) -> Result<(), UnstashError> {
+    pub fn object_replace<T: 'static + Unstashable>(
+        &mut self,
+        object: &mut T,
+    ) -> Result<(), UnstashError> {
         let other_object = self.backend.object_proxy(T::unstash)?;
         if self.phase == InplaceUnstashPhase::Write {
             *object = other_object;
