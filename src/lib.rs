@@ -22,11 +22,7 @@ pub use valuetypes::{PrimitiveType, ValueType};
 use unstasher::{InplaceUnstashPhase, UnstasherBackend};
 
 /// Trait for hashing and serializing an object
-pub trait Stashable {
-    // TODO: make this default to the unit type () once Rust supported
-    // associated trait type defaults
-    type Context;
-
+pub trait Stashable<Context = ()> {
     /// Stash the object. The given Stasher may hash or serialize
     /// the data it's given, but this is transparent to the user.
     ///
@@ -34,36 +30,30 @@ pub trait Stashable {
     /// hash the object's contents and find a matching stashed
     /// object, and a second time to serialize the same contents
     /// to create a new stashed object if no match yet exists.
-    fn stash(&self, stasher: &mut Stasher<Self::Context>);
+    fn stash(&self, stasher: &mut Stasher<Context>);
 }
 
-impl<T: Stashable> Stashable for &T {
-    type Context = T::Context;
-
-    fn stash(&self, stasher: &mut Stasher<Self::Context>) {
+impl<Context, T: Stashable<Context>> Stashable<Context> for &T {
+    fn stash(&self, stasher: &mut Stasher<Context>) {
         T::stash(self, stasher);
     }
 }
 
 /// Trait for objects that can be unstashed or deserialized by
 /// creating a new object.
-pub trait Unstashable: Sized {
-    type Context;
-
+pub trait Unstashable<Context = ()>: Sized {
     /// Unstash/deserialize a new object.
     /// This method is called only once per object being unstashed.
     ///
     /// Consider using [test_stash_roundtrip] to test whether
     /// this method and the corresponding [Stashable] implementation
     /// are behaving correctly.
-    fn unstash(unstasher: &mut Unstasher<Self::Context>) -> Result<Self, UnstashError>;
+    fn unstash(unstasher: &mut Unstasher<Context>) -> Result<Self, UnstashError>;
 }
 
 /// Trait for objects that can be unstashed or deserialized by
 /// modifying an existing object.
-pub trait UnstashableInplace {
-    type Context;
-
+pub trait UnstashableInplace<Context = ()> {
     /// Unstash/deserialize an existing object, either validating
     /// the data being unstashed without making changes to the
     /// object, OR reading the same data and writing it to the object.
@@ -84,7 +74,7 @@ pub trait UnstashableInplace {
     /// are behaving correctly.
     fn unstash_inplace(
         &mut self,
-        unstasher: &mut InplaceUnstasher<Self::Context>,
+        unstasher: &mut InplaceUnstasher<Context>,
     ) -> Result<(), UnstashError>;
 }
 
@@ -95,14 +85,14 @@ pub struct ObjectHash(u64);
 
 impl ObjectHash {
     /// Create a new ObjectHash by hashing a Stashable object
-    pub fn from_stashable<T: ?Sized + Stashable<Context = ()>>(object: &T) -> ObjectHash {
+    pub fn from_stashable<T: ?Sized + Stashable<()>>(object: &T) -> ObjectHash {
         Self::from_stashable_and_context(object, &())
     }
 
     /// Create a new ObjectHash by hashing a Stashable object
-    pub fn from_stashable_and_context<T: ?Sized + Stashable>(
+    pub fn from_stashable_and_context<C, T: ?Sized + Stashable<C>>(
         object: &T,
-        context: &T::Context,
+        context: &C,
     ) -> ObjectHash {
         Self::with_stasher_and_context(|stasher| object.stash(stasher), context)
     }
@@ -115,9 +105,9 @@ impl ObjectHash {
 
     /// Create a new ObjectHash by hashing the data given to
     /// a Stasher in the provided function
-    pub fn with_stasher_and_context<Context, F: FnMut(&mut Stasher<Context>)>(
+    pub fn with_stasher_and_context<C, F: FnMut(&mut Stasher<C>)>(
         mut f: F,
-        context: &Context,
+        context: &C,
     ) -> ObjectHash {
         let mut hasher = seahash::SeaHasher::new();
 
@@ -156,10 +146,10 @@ impl StashMap {
     /// one. Otherwise, if the hash matches an existing serialized object, it
     /// is not serialized a second time and the existing object has its reference
     /// count increased.
-    fn stash_and_add_reference<Context, F: FnMut(&mut Stasher<Context>)>(
+    fn stash_and_add_reference<C, F: FnMut(&mut Stasher<C>)>(
         &mut self,
         mut f: F,
-        context: &Context,
+        context: &C,
     ) -> ObjectHash {
         let hash = ObjectHash::with_stasher_and_context(&mut f, context);
 
@@ -200,11 +190,11 @@ impl StashMap {
     /// its contents to the given function.
     /// This method panics if there is not stashed object with the
     /// given hash.
-    fn unstash<'a, Context, R, F: FnMut(&mut Unstasher<Context>) -> Result<R, UnstashError>>(
+    fn unstash<'a, C, R, F: FnMut(&mut Unstasher<C>) -> Result<R, UnstashError>>(
         &self,
         hash: ObjectHash,
         mut f: F,
-        context: &Context,
+        context: &C,
     ) -> Result<R, UnstashError> {
         let stashed_object = self.objects.get(&hash).unwrap();
 
@@ -228,16 +218,12 @@ impl StashMap {
     /// phase.
     /// This method panics if there is not stashed object with the
     /// given hash.
-    fn unstash_inplace<
-        'a,
-        Context,
-        F: FnMut(&mut InplaceUnstasher<Context>) -> Result<(), UnstashError>,
-    >(
+    fn unstash_inplace<'a, C, F: FnMut(&mut InplaceUnstasher<C>) -> Result<(), UnstashError>>(
         &self,
         hash: ObjectHash,
         phase: InplaceUnstashPhase,
         mut f: F,
-        context: &Context,
+        context: &C,
     ) -> Result<(), UnstashError> {
         let stashed_object = self.objects.get(&hash).unwrap();
 
@@ -325,16 +311,16 @@ impl Stash {
     /// The object is hashed and serialized and stored in the Stash.
     /// If an existing object has the same contents, its storage
     /// is reused and the serialization is skipped.
-    pub fn stash<T: Stashable<Context = ()>>(&self, object: &T) -> StashHandle<T> {
+    pub fn stash<T: Stashable<()>>(&self, object: &T) -> StashHandle<T> {
         let mut stashmap = self.map.borrow_mut();
         let hash = stashmap.stash_and_add_reference(|stasher| object.stash(stasher), &());
         StashHandle::new(Rc::clone(&self.map), hash)
     }
 
-    pub fn stash_with_context<T: Stashable>(
+    pub fn stash_with_context<C, T: Stashable<C>>(
         &self,
         object: &T,
-        context: &T::Context,
+        context: &C,
     ) -> StashHandle<T> {
         let mut stashmap = self.map.borrow_mut();
         let hash = stashmap.stash_and_add_reference(|stasher| object.stash(stasher), context);
@@ -348,17 +334,14 @@ impl Stash {
     /// See [Unstashable], which is needed to use this method, or else
     /// see [Self::unstash_inplace] and [UnstashableInplace] to unstash
     /// and restore existing objects to a different state.
-    pub fn unstash<T: Unstashable<Context = ()>>(
-        &self,
-        handle: &StashHandle<T>,
-    ) -> Result<T, UnstashError> {
+    pub fn unstash<T: Unstashable<()>>(&self, handle: &StashHandle<T>) -> Result<T, UnstashError> {
         self.unstash_with_context(handle, &())
     }
 
-    pub fn unstash_with_context<T: Unstashable>(
+    pub fn unstash_with_context<C, T: Unstashable<C>>(
         &self,
         handle: &StashHandle<T>,
-        context: &T::Context,
+        context: &C,
     ) -> Result<T, UnstashError> {
         self.map.borrow().unstash(handle.hash, T::unstash, context)
     }
@@ -375,14 +358,14 @@ impl Stash {
         self.unstash_proxy_with_context(handle, f, &())
     }
 
-    pub fn unstash_proxy_with_context<Context, T, F>(
+    pub fn unstash_proxy_with_context<C, T, F>(
         &self,
         handle: &StashHandle<T>,
         f: F,
-        context: &Context,
+        context: &C,
     ) -> Result<T, UnstashError>
     where
-        F: FnMut(&mut Unstasher<Context>) -> Result<T, UnstashError>,
+        F: FnMut(&mut Unstasher<C>) -> Result<T, UnstashError>,
     {
         self.map.borrow().unstash(handle.hash, f, context)
     }
@@ -396,7 +379,7 @@ impl Stash {
     /// See [UnstashableInplace], which is needed to use this method, or
     /// else see [Self::unstash] and [Unstashable] to unstash newly-created
     /// objects instead.
-    pub fn unstash_inplace<T: UnstashableInplace<Context = ()>>(
+    pub fn unstash_inplace<T: UnstashableInplace<()>>(
         &self,
         handle: &StashHandle<T>,
         object: &mut T,
@@ -404,11 +387,11 @@ impl Stash {
         self.unstash_inplace_with_context(handle, object, &())
     }
 
-    pub fn unstash_inplace_with_context<T: UnstashableInplace>(
+    pub fn unstash_inplace_with_context<C, T: UnstashableInplace<C>>(
         &self,
         handle: &StashHandle<T>,
         object: &mut T,
-        context: &T::Context,
+        context: &C,
     ) -> Result<(), UnstashError> {
         let map = self.map.borrow();
         map.unstash_inplace(
@@ -480,11 +463,11 @@ pub enum RoundTripError {
 /// It is recommended to call this method in unit tests with
 /// multiple different initial values and modifications.
 /// Successful round-trip tests will return `Ok(())`.
-pub fn test_stash_roundtrip<T: Stashable + Unstashable, Create, Modify>(
+pub fn test_stash_roundtrip<C1, C2, T: Stashable<C1> + Unstashable<C2>, Create, Modify>(
     mut create: Create,
     mut modify: Modify,
-    stash_context: &<T as Stashable>::Context,
-    unstash_context: &<T as Unstashable>::Context,
+    stash_context: &C1,
+    unstash_context: &C2,
 ) -> Result<(), RoundTripError>
 where
     Create: FnMut() -> T,
@@ -527,11 +510,17 @@ where
 /// It is recommended to call this method in unit tests with
 /// multiple different initial values and modifications.
 /// Successful round-trip tests will return `Ok(())`.
-pub fn test_stash_roundtrip_inplace<T: Stashable + UnstashableInplace, Create, Modify>(
+pub fn test_stash_roundtrip_inplace<
+    C1,
+    C2,
+    T: Stashable<C1> + UnstashableInplace<C2>,
+    Create,
+    Modify,
+>(
     mut create: Create,
     mut modify: Modify,
-    stash_context: &<T as Stashable>::Context,
-    unstash_context: &<T as UnstashableInplace>::Context,
+    stash_context: &C1,
+    unstash_context: &C2,
 ) -> Result<(), RoundTripError>
 where
     Create: FnMut() -> T,
@@ -651,19 +640,19 @@ impl<T> Drop for StashHandle<T> {
 /// contains copies of sub-bojects being stashed.
 pub fn stash_clone<T>(object: &T, stash: &Stash) -> Result<(T, StashHandle<T>), UnstashError>
 where
-    T: Stashable<Context = ()> + Unstashable<Context = ()>,
+    T: Stashable<()> + Unstashable<()>,
 {
     stash_clone_with_context(object, stash, &(), &())
 }
 
-pub fn stash_clone_with_context<T>(
+pub fn stash_clone_with_context<C1, C2, T>(
     object: &T,
     stash: &Stash,
-    stash_context: &<T as Stashable>::Context,
-    unstash_context: &<T as Unstashable>::Context,
+    stash_context: &C1,
+    unstash_context: &C2,
 ) -> Result<(T, StashHandle<T>), UnstashError>
 where
-    T: Stashable + Unstashable,
+    T: Stashable<C1> + Unstashable<C2>,
 {
     let handle = stash.stash_with_context(object, stash_context);
 
@@ -679,22 +668,22 @@ pub fn stash_clone_proxy<T, F>(
     f: F,
 ) -> Result<(T, StashHandle<T>), UnstashError>
 where
-    T: Stashable<Context = ()>,
+    T: Stashable<()>,
     F: FnMut(&mut Unstasher<()>) -> Result<T, UnstashError>,
 {
     stash_clone_proxy_with_context(object, stash, f, &(), &())
 }
 
-pub fn stash_clone_proxy_with_context<Context, T, F>(
+pub fn stash_clone_proxy_with_context<C1, C2, T, F>(
     object: &T,
     stash: &Stash,
     f: F,
-    stash_context: &T::Context,
-    unstash_context: &Context,
+    stash_context: &C1,
+    unstash_context: &C2,
 ) -> Result<(T, StashHandle<T>), UnstashError>
 where
-    T: Stashable,
-    F: FnMut(&mut Unstasher<Context>) -> Result<T, UnstashError>,
+    T: Stashable<C1>,
+    F: FnMut(&mut Unstasher<C2>) -> Result<T, UnstashError>,
 {
     let handle = stash.stash_with_context(object, stash_context);
 

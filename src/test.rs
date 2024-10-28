@@ -15,8 +15,6 @@ struct StructA {
 }
 
 impl Stashable for StructA {
-    type Context = ();
-
     fn stash(&self, stasher: &mut Stasher) {
         stasher.i32(self.i);
         stasher.u64(self.x);
@@ -25,9 +23,7 @@ impl Stashable for StructA {
 }
 
 impl Unstashable for StructA {
-    type Context = ();
-
-    fn unstash(unstasher: &mut Unstasher<()>) -> Result<Self, UnstashError> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
         Ok(StructA {
             i: unstasher.i32()?,
             x: unstasher.u64()?,
@@ -37,8 +33,6 @@ impl Unstashable for StructA {
 }
 
 impl UnstashableInplace for StructA {
-    type Context = ();
-
     fn unstash_inplace(
         &mut self,
         unstasher: &mut InplaceUnstasher<()>,
@@ -181,7 +175,6 @@ fn test_basic_struct_changing() {
 struct StructAWrapper(StructA);
 
 impl Stashable for StructAWrapper {
-    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.object_proxy(|stasher| {
             stasher.i32(self.0.i);
@@ -192,9 +185,7 @@ impl Stashable for StructAWrapper {
 }
 
 impl Unstashable for StructAWrapper {
-    type Context = ();
-
-    fn unstash(unstasher: &mut Unstasher<()>) -> Result<Self, UnstashError> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
         unstasher.object_proxy(|unstasher| {
             Ok(StructAWrapper(StructA {
                 i: unstasher.i32()?,
@@ -253,7 +244,6 @@ struct StructB {
 }
 
 impl Stashable for StructB {
-    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.object(&self.a1);
         stasher.bool(self.b);
@@ -264,9 +254,7 @@ impl Stashable for StructB {
 }
 
 impl Unstashable for StructB {
-    type Context = ();
-
-    fn unstash(unstasher: &mut Unstasher<()>) -> Result<Self, UnstashError> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
         Ok(StructB {
             a1: unstasher.object()?,
             b: unstasher.bool()?,
@@ -278,8 +266,6 @@ impl Unstashable for StructB {
 }
 
 impl UnstashableInplace for StructB {
-    type Context = ();
-
     fn unstash_inplace(
         &mut self,
         unstasher: &mut InplaceUnstasher<()>,
@@ -471,7 +457,6 @@ struct StructWithVecs {
 }
 
 impl Stashable for StructWithVecs {
-    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.array_of_i32_slice(&self.vec_i32);
         stasher.array_of_u8_iter(self.vec_u8.iter().cloned());
@@ -479,9 +464,7 @@ impl Stashable for StructWithVecs {
 }
 
 impl Unstashable for StructWithVecs {
-    type Context = ();
-
-    fn unstash(unstasher: &mut Unstasher<()>) -> Result<Self, UnstashError> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
         let vec_i32 = unstasher.array_of_i32_iter()?.collect();
         let vec_u8 = unstasher.array_of_u8_vec()?;
         Ok(StructWithVecs { vec_i32, vec_u8 })
@@ -489,12 +472,7 @@ impl Unstashable for StructWithVecs {
 }
 
 impl UnstashableInplace for StructWithVecs {
-    type Context = ();
-
-    fn unstash_inplace(
-        &mut self,
-        unstasher: &mut InplaceUnstasher<()>,
-    ) -> Result<(), UnstashError> {
+    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
         unstasher.array_of_i32_vec_inplace(&mut self.vec_i32)?;
         unstasher.array_of_u8_vec_inplace(&mut self.vec_u8)?;
         Ok(())
@@ -596,16 +574,13 @@ struct StructWithVecOfObjects {
 }
 
 impl Stashable for StructWithVecOfObjects {
-    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.array_of_objects_slice(&self.objects, Order::Ordered);
     }
 }
 
 impl Unstashable for StructWithVecOfObjects {
-    type Context = ();
-
-    fn unstash(unstasher: &mut Unstasher<()>) -> Result<Self, UnstashError> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
         Ok(StructWithVecOfObjects {
             objects: unstasher.array_of_objects_vec()?,
         })
@@ -613,8 +588,6 @@ impl Unstashable for StructWithVecOfObjects {
 }
 
 impl UnstashableInplace for StructWithVecOfObjects {
-    type Context = ();
-
     fn unstash_inplace(
         &mut self,
         unstasher: &mut InplaceUnstasher<()>,
@@ -785,16 +758,13 @@ struct StructWithHashSetOfBasicObjects {
 }
 
 impl Stashable for StructWithHashSetOfBasicObjects {
-    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.array_of_objects_iter(self.objects.iter(), Order::Unordered);
     }
 }
 
 impl Unstashable for StructWithHashSetOfBasicObjects {
-    type Context = ();
-
-    fn unstash(unstasher: &mut Unstasher<()>) -> Result<Self, UnstashError> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
         Ok(StructWithHashSetOfBasicObjects {
             objects: unstasher
                 .array_of_objects_iter()?
@@ -804,8 +774,6 @@ impl Unstashable for StructWithHashSetOfBasicObjects {
 }
 
 impl UnstashableInplace for StructWithHashSetOfBasicObjects {
-    type Context = ();
-
     fn unstash_inplace(
         &mut self,
         unstasher: &mut InplaceUnstasher<()>,
@@ -963,16 +931,13 @@ struct StructWithWeirdContainer {
 }
 
 impl Stashable for StructWithWeirdContainer {
-    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         stasher.array_of_objects_iter(self.container.items(), Order::Unordered);
     }
 }
 
 impl Unstashable for StructWithWeirdContainer {
-    type Context = ();
-
-    fn unstash(unstasher: &mut Unstasher<()>) -> Result<Self, UnstashError> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
         let mut container = WeirdContainer::<StructA>::new(1024);
         for s in unstasher.array_of_objects_iter::<StructA>()? {
             container.insert_somewhere_random(s?);
@@ -982,8 +947,6 @@ impl Unstashable for StructWithWeirdContainer {
 }
 
 impl UnstashableInplace for StructWithWeirdContainer {
-    type Context = ();
-
     fn unstash_inplace(
         &mut self,
         unstasher: &mut InplaceUnstasher<()>,
@@ -1115,7 +1078,6 @@ impl Graph {
 }
 
 impl Stashable for Graph {
-    type Context = ();
     fn stash(&self, stasher: &mut Stasher) {
         // nodes
         stasher.array_of_proxy_objects(
@@ -1154,9 +1116,7 @@ impl Stashable for Graph {
 }
 
 impl Unstashable for Graph {
-    type Context = ();
-
-    fn unstash(unstasher: &mut Unstasher<()>) -> Result<Self, UnstashError> {
+    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
         let mut graph = Graph::new();
 
         unstasher.array_of_proxy_objects(|unstasher| {
@@ -1178,8 +1138,6 @@ impl Unstashable for Graph {
 }
 
 impl UnstashableInplace for Graph {
-    type Context = ();
-
     fn unstash_inplace(
         &mut self,
         unstasher: &mut InplaceUnstasher<()>,

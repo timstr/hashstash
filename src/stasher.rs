@@ -350,13 +350,13 @@ impl<'a, Context> Stasher<'a, Context> {
     }
 
     /// Write a single [Stashable] object
-    pub fn object<T: Stashable<Context = Context>>(&mut self, object: &T) {
+    pub fn object<T: Stashable<Context>>(&mut self, object: &T) {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
         self.backend
             .stash_dependency(|stasher| object.stash(stasher), self.context);
     }
 
-    pub fn object_with_context<T: Stashable>(&mut self, object: &T, context: &T::Context) {
+    pub fn object_with_context<C1, T: Stashable<C1>>(&mut self, object: &T, context: &C1) {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
         self.backend
             .stash_dependency(|stasher| object.stash(stasher), context);
@@ -380,29 +380,21 @@ impl<'a, Context> Stasher<'a, Context> {
     }
 
     /// Write an array of [Stashable] objects from a slice
-    pub fn array_of_objects_slice<T: Stashable<Context = Context>>(
-        &mut self,
-        objects: &[T],
-        order: Order,
-    ) {
+    pub fn array_of_objects_slice<T: Stashable<Context>>(&mut self, objects: &[T], order: Order) {
         self.array_of_objects_iter_with_context(objects.iter(), order, self.context);
     }
 
-    pub fn array_of_objects_slice_with_context<T: Stashable>(
+    pub fn array_of_objects_slice_with_context<C1, T: Stashable<C1>>(
         &mut self,
         objects: &[T],
         order: Order,
-        context: &T::Context,
+        context: &C1,
     ) {
         self.array_of_objects_iter_with_context(objects.iter(), order, context);
     }
 
     /// Write an array of [Stashable] objects from an iterator
-    pub fn array_of_objects_iter<
-        'b,
-        T: 'b + Stashable<Context = Context>,
-        I: Iterator<Item = &'b T>,
-    >(
+    pub fn array_of_objects_iter<'b, T: 'b + Stashable<Context>, I: Iterator<Item = &'b T>>(
         &mut self,
         it: I,
         order: Order,
@@ -410,11 +402,16 @@ impl<'a, Context> Stasher<'a, Context> {
         self.array_of_objects_iter_with_context(it, order, self.context);
     }
 
-    pub fn array_of_objects_iter_with_context<'b, T: 'b + Stashable, I: Iterator<Item = &'b T>>(
+    pub fn array_of_objects_iter_with_context<
+        'b,
+        C1,
+        T: 'b + Stashable<C1>,
+        I: Iterator<Item = &'b T>,
+    >(
         &mut self,
         it: I,
         order: Order,
-        context: &T::Context,
+        context: &C1,
     ) {
         self.backend
             .write_raw_bytes(&[ValueType::ArrayOfObjects.to_byte()]);
