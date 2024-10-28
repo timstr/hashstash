@@ -17,13 +17,20 @@ fn combine_hashes(hashes: &[ObjectHash]) -> ObjectHash {
     ObjectHash(hasher.finish())
 }
 
+#[derive(Copy, Clone)]
+struct HashCacheEntry {
+    context_hash: ObjectHash,
+    object_hash: ObjectHash,
+}
+
 /// HashCache is a wrapper around a Stashable object that caches
 /// the hash value of that object between repeated non-mutable
 /// accesses. Mutably accessing the stored object invalidates
 /// the cached hash value, which is only recomputed as needed.
 pub struct HashCache<T: ?Sized> {
     /// The cached hash
-    hash: Cell<Option<ObjectHash>>,
+    // TODO: make this size adjustable?
+    entries: [Cell<Option<HashCacheEntry>>; 2],
 
     /// The stored object
     value: T,
@@ -34,7 +41,7 @@ impl<T> HashCache<T> {
     /// The hash is not yet computed or cached.
     pub fn new(value: T) -> HashCache<T> {
         HashCache {
-            hash: Cell::new(None),
+            entries: [Cell::new(None), Cell::new(None)],
             value,
         }
     }
@@ -51,30 +58,54 @@ impl<T: ?Sized> Deref for HashCache<T> {
 impl<T: ?Sized> DerefMut for HashCache<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // Invalidate the cached hash
-        self.hash.set(None);
+        for entry in &self.entries {
+            entry.set(None);
+        }
 
         &mut self.value
     }
 }
 
-impl<T: ?Sized + Stashable> Stashable for HashCache<T> {
+impl<T: ?Sized + Stashable> Stashable for HashCache<T>
+where
+    T::Context: Stashable<Context = ()>,
+{
     type Context = T::Context;
 
     fn stash(&self, stasher: &mut Stasher<Self::Context>) {
         if stasher.hashing() {
             // If hashing, look for a cached hash or compute
             // and save it if not cached
-            let hash = match self.hash.get() {
-                Some(existing_hash) => existing_hash,
-                None => {
-                    let hash =
-                        ObjectHash::from_stashable_and_context(&self.value, stasher.context());
-                    self.hash.set(Some(hash));
-                    hash
-                }
-            };
 
-            stasher.u64(hash.0);
+            // hash the context
+            let context_hash = ObjectHash::from_stashable(stasher.context());
+
+            let mut next_empty_entry = None;
+
+            // search for a matching entry
+            for (i, entry) in self.entries.iter().enumerate() {
+                if let Some(entry) = entry.get() {
+                    if entry.context_hash == context_hash {
+                        stasher.u64(entry.object_hash.0);
+                        return;
+                    }
+                } else if next_empty_entry.is_none() {
+                    next_empty_entry = Some(i);
+                }
+            }
+
+            // otherwise, if no matching entry was found,
+            // recompute the object hash and store it
+
+            let object_hash =
+                ObjectHash::from_stashable_and_context(&self.value, stasher.context());
+
+            self.entries[next_empty_entry.unwrap_or(0)].set(Some(HashCacheEntry {
+                context_hash,
+                object_hash,
+            }));
+
+            stasher.u64(object_hash.0);
         } else {
             // Otherwise, if serializing, just serialize
             self.deref().stash(stasher);
@@ -83,13 +114,20 @@ impl<T: ?Sized + Stashable> Stashable for HashCache<T> {
 }
 
 impl<T: Unstashable> Unstashable for HashCache<T> {
-    fn unstash(unstasher: &mut Unstasher) -> Result<Self, UnstashError> {
+    type Context = T::Context;
+
+    fn unstash(unstasher: &mut Unstasher<Self::Context>) -> Result<Self, UnstashError> {
         Ok(HashCache::new(T::unstash(unstasher)?))
     }
 }
 
 impl<T: UnstashableInplace> UnstashableInplace for HashCache<T> {
-    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher) -> Result<(), UnstashError> {
+    type Context = T::Context;
+
+    fn unstash_inplace(
+        &mut self,
+        unstasher: &mut InplaceUnstasher<Self::Context>,
+    ) -> Result<(), UnstashError> {
         self.deref_mut().unstash_inplace(unstasher)
     }
 }

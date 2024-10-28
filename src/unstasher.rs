@@ -48,13 +48,14 @@ impl<'a, T: PrimitiveReadWrite> ExactSizeIterator for PrimitiveIterator<'a, T> {
 }
 
 /// Iterator over an array of [Unstashable] objects being unstashed
-pub struct ObjectIterator<'a, T> {
+pub struct ObjectIterator<'a, Context, T> {
     hashes: &'a [ObjectHash],
     stashmap: &'a StashMap,
+    context: &'a Context,
     _phantom_data: PhantomData<T>,
 }
 
-impl<'a, T: Unstashable> Iterator for ObjectIterator<'a, T> {
+impl<'a, T: Unstashable> Iterator for ObjectIterator<'a, T::Context, T> {
     type Item = Result<T, UnstashError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -62,7 +63,7 @@ impl<'a, T: Unstashable> Iterator for ObjectIterator<'a, T> {
             return None;
         };
         self.hashes = remaining_hashes;
-        Some(self.stashmap.unstash(*hash, T::unstash))
+        Some(self.stashmap.unstash(*hash, T::unstash, self.context))
     }
 }
 
@@ -161,12 +162,17 @@ impl<'a> UnstasherBackend<'a> {
     /// Try to perform an operation, get its result, and
     /// rollback the position in the underlying byte vector
     /// if it failed.
-    fn reset_on_error<T: 'a, F: FnOnce(&mut UnstasherBackend<'a>) -> Result<T, UnstashError>>(
+    fn reset_on_error<
+        Context,
+        T: 'a,
+        F: FnOnce(&mut UnstasherBackend<'a>, &'a Context) -> Result<T, UnstashError>,
+    >(
         &mut self,
         f: F,
+        context: &'a Context,
     ) -> Result<T, UnstashError> {
         let original = self.clone();
-        let result = f(self);
+        let result = f(self, context);
         if result.is_err() {
             *self = original;
         }
@@ -176,13 +182,16 @@ impl<'a> UnstasherBackend<'a> {
     /// Read a single primitive, checking for its type tag first and then
     /// reading its value
     fn read_primitive<T: 'static + PrimitiveReadWrite>(&mut self) -> Result<T, UnstashError> {
-        self.reset_on_error(|unstasher| {
-            if unstasher.read_value_type()? != ValueType::Primitive(T::TYPE) {
-                return Err(UnstashError::WrongValueType);
-            }
-            let x = T::read_raw_bytes_from(&mut unstasher.bytes);
-            Ok(x)
-        })
+        self.reset_on_error(
+            |unstasher, _| {
+                if unstasher.read_value_type()? != ValueType::Primitive(T::TYPE) {
+                    return Err(UnstashError::WrongValueType);
+                }
+                let x = T::read_raw_bytes_from(&mut unstasher.bytes);
+                Ok(x)
+            },
+            &(),
+        )
     }
 
     /// Read an array of primitives to a vector
@@ -196,77 +205,93 @@ impl<'a> UnstasherBackend<'a> {
     fn read_primitive_array_iter<T: 'static + PrimitiveReadWrite>(
         &mut self,
     ) -> Result<PrimitiveIterator<'a, T>, UnstashError> {
-        self.reset_on_error(|unstasher| {
-            if unstasher.read_value_type()? != ValueType::Array(T::TYPE) {
-                return Err(UnstashError::WrongValueType);
-            }
-            let len = unstasher.read_value_length()?;
-            let num_bytes = len * T::SIZE;
-            if unstasher.remaining_len() < num_bytes {
-                return Err(UnstashError::Corrupted);
-            }
-            let iterator = PrimitiveIterator {
-                data: &unstasher.bytes[..num_bytes],
-                _phantom_data: PhantomData,
-            };
-            unstasher.bytes = &unstasher.bytes[num_bytes..];
-            Ok(iterator)
-        })
+        self.reset_on_error(
+            |unstasher, _| {
+                if unstasher.read_value_type()? != ValueType::Array(T::TYPE) {
+                    return Err(UnstashError::WrongValueType);
+                }
+                let len = unstasher.read_value_length()?;
+                let num_bytes = len * T::SIZE;
+                if unstasher.remaining_len() < num_bytes {
+                    return Err(UnstashError::Corrupted);
+                }
+                let iterator = PrimitiveIterator {
+                    data: &unstasher.bytes[..num_bytes],
+                    _phantom_data: PhantomData,
+                };
+                unstasher.bytes = &unstasher.bytes[num_bytes..];
+                Ok(iterator)
+            },
+            &(),
+        )
     }
 
     /// Read an array of [Unstashable] objects into a vector
     fn read_array_of_object_vec<T: 'static + Unstashable>(
         &mut self,
+        context: &'a T::Context,
     ) -> Result<Vec<T>, UnstashError> {
-        self.read_array_of_object_iter()?.collect()
+        self.read_array_of_object_iter(context)?.collect()
     }
 
     /// Read an array of [Unstashable] objects via an iterator
     fn read_array_of_object_iter<T: 'static + Unstashable>(
         &mut self,
-    ) -> Result<ObjectIterator<T>, UnstashError> {
-        self.reset_on_error(|unstasher| {
-            if unstasher.read_value_type()? != ValueType::ArrayOfObjects {
-                return Err(UnstashError::WrongValueType);
-            }
-            let len = unstasher.read_value_length()?;
+        context: &'a T::Context,
+    ) -> Result<ObjectIterator<'a, T::Context, T>, UnstashError> {
+        self.reset_on_error(
+            |unstasher, context| {
+                if unstasher.read_value_type()? != ValueType::ArrayOfObjects {
+                    return Err(UnstashError::WrongValueType);
+                }
+                let len = unstasher.read_value_length()?;
 
-            let Some((hashes, remaining_hashes)) = unstasher.dependencies.split_at_checked(len)
-            else {
-                return Err(UnstashError::Corrupted);
-            };
-            unstasher.dependencies = remaining_hashes;
-            let iter = ObjectIterator {
-                hashes,
-                stashmap: unstasher.stashmap,
-                _phantom_data: PhantomData,
-            };
-            Ok(iter)
-        })
+                let Some((hashes, remaining_hashes)) = unstasher.dependencies.split_at_checked(len)
+                else {
+                    return Err(UnstashError::Corrupted);
+                };
+                unstasher.dependencies = remaining_hashes;
+                let iter = ObjectIterator {
+                    hashes,
+                    stashmap: unstasher.stashmap,
+                    context: context,
+                    _phantom_data: PhantomData,
+                };
+                Ok(iter)
+            },
+            context,
+        )
     }
 
     /// Read an array of stashed objects via the given function which
     /// is called once per object with an [Unstasher] instance.
-    fn read_array_of_object_proxies<F: FnMut(&mut Unstasher) -> Result<(), UnstashError>>(
+    fn read_array_of_object_proxies<
+        Context,
+        F: FnMut(&mut Unstasher<Context>) -> Result<(), UnstashError>,
+    >(
         &mut self,
         mut f: F,
+        context: &'a Context,
     ) -> Result<(), UnstashError> {
-        self.reset_on_error(|unstasher| {
-            if unstasher.read_value_type()? != ValueType::ArrayOfObjects {
-                return Err(UnstashError::WrongValueType);
-            }
-            let len = unstasher.read_value_length()?;
+        self.reset_on_error(
+            |unstasher, context| {
+                if unstasher.read_value_type()? != ValueType::ArrayOfObjects {
+                    return Err(UnstashError::WrongValueType);
+                }
+                let len = unstasher.read_value_length()?;
 
-            let Some((hashes, remaining_hashes)) = unstasher.dependencies.split_at_checked(len)
-            else {
-                return Err(UnstashError::Corrupted);
-            };
-            unstasher.dependencies = remaining_hashes;
-            for hash in hashes {
-                unstasher.stashmap.unstash(*hash, &mut f)?;
-            }
-            Ok(())
-        })
+                let Some((hashes, remaining_hashes)) = unstasher.dependencies.split_at_checked(len)
+                else {
+                    return Err(UnstashError::Corrupted);
+                };
+                unstasher.dependencies = remaining_hashes;
+                for hash in hashes {
+                    unstasher.stashmap.unstash(*hash, &mut f, context)?;
+                }
+                Ok(())
+            },
+            context,
+        )
     }
 
     /// Read a single given [UnstashableInplace] object with the given phase
@@ -274,65 +299,86 @@ impl<'a> UnstasherBackend<'a> {
         &mut self,
         object: &mut T,
         phase: InplaceUnstashPhase,
+        context: &'a T::Context,
     ) -> Result<(), UnstashError> {
-        self.reset_on_error(|unstasher| {
-            if unstasher.read_value_type()? != ValueType::StashedObject {
-                return Err(UnstashError::WrongValueType);
-            }
+        self.reset_on_error(
+            |unstasher, context| {
+                if unstasher.read_value_type()? != ValueType::StashedObject {
+                    return Err(UnstashError::WrongValueType);
+                }
 
-            let hash = unstasher.read_dependency()?;
-            unstasher
-                .stashmap
-                .unstash_inplace(hash, phase, |unstasher| object.unstash_inplace(unstasher))
-        })
+                let hash = unstasher.read_dependency()?;
+                unstasher.stashmap.unstash_inplace(
+                    hash,
+                    phase,
+                    |unstasher| object.unstash_inplace(unstasher),
+                    context,
+                )
+            },
+            context,
+        )
     }
 
     /// Read a single object via a given function that receives an [Unstasher]
-    fn object_proxy<R: 'static, F>(&mut self, f: F) -> Result<R, UnstashError>
+    fn object_proxy<Context, R: 'static, F>(
+        &mut self,
+        f: F,
+        context: &'a Context,
+    ) -> Result<R, UnstashError>
     where
-        F: FnMut(&mut Unstasher) -> Result<R, UnstashError>,
+        F: FnMut(&mut Unstasher<Context>) -> Result<R, UnstashError>,
     {
-        self.reset_on_error(|unstasher| {
-            if unstasher.read_value_type()? != ValueType::StashedObject {
-                return Err(UnstashError::WrongValueType);
-            }
+        self.reset_on_error(
+            |unstasher, context| {
+                if unstasher.read_value_type()? != ValueType::StashedObject {
+                    return Err(UnstashError::WrongValueType);
+                }
 
-            let hash = unstasher.read_dependency()?;
-            unstasher.stashmap.unstash(hash, f)
-        })
+                let hash = unstasher.read_dependency()?;
+                unstasher.stashmap.unstash(hash, f, context)
+            },
+            context,
+        )
     }
 
     /// Read a single object via a given function that receives an [InplaceUnstasher]
-    fn object_proxy_inplace<F>(
+    fn object_proxy_inplace<Context, F>(
         &mut self,
         f: F,
         phase: InplaceUnstashPhase,
+        context: &'a Context,
     ) -> Result<(), UnstashError>
     where
-        F: FnMut(&mut InplaceUnstasher) -> Result<(), UnstashError>,
+        F: FnMut(&mut InplaceUnstasher<Context>) -> Result<(), UnstashError>,
     {
-        self.reset_on_error(|unstasher| {
-            if unstasher.read_value_type()? != ValueType::StashedObject {
-                return Err(UnstashError::WrongValueType);
-            }
+        self.reset_on_error(
+            |unstasher, context| {
+                if unstasher.read_value_type()? != ValueType::StashedObject {
+                    return Err(UnstashError::WrongValueType);
+                }
 
-            let hash = unstasher.read_dependency()?;
-            unstasher.stashmap.unstash_inplace(hash, phase, f)
-        })
+                let hash = unstasher.read_dependency()?;
+                unstasher.stashmap.unstash_inplace(hash, phase, f, context)
+            },
+            context,
+        )
     }
 
     /// Read a single string
     fn string(&mut self) -> Result<String, UnstashError> {
-        self.reset_on_error(|unstasher| {
-            if unstasher.read_value_type()? != ValueType::String {
-                return Err(UnstashError::WrongValueType);
-            }
-            let len = unstasher.read_value_length()?;
+        self.reset_on_error(
+            |unstasher, _| {
+                if unstasher.read_value_type()? != ValueType::String {
+                    return Err(UnstashError::WrongValueType);
+                }
+                let len = unstasher.read_value_length()?;
 
-            let slice = unstasher.read_raw_bytes(len)?;
-            let str_slice = std::str::from_utf8(slice).map_err(|_| UnstashError::Corrupted)?;
-            Ok(str_slice.to_string())
-        })
+                let slice = unstasher.read_raw_bytes(len)?;
+                let str_slice = std::str::from_utf8(slice).map_err(|_| UnstashError::Corrupted)?;
+                Ok(str_slice.to_string())
+            },
+            &(),
+        )
     }
 
     /// Read the type of the next value
@@ -362,14 +408,18 @@ impl<'a> UnstasherBackend<'a> {
 
 /// Struct for unstashing and deserializing by creating new objects.
 /// This struct is passed to [Unstashable::unstash]
-pub struct Unstasher<'a> {
+pub struct Unstasher<'a, Context> {
     backend: UnstasherBackend<'a>,
+    context: &'a Context,
 }
 
-impl<'a> Unstasher<'a> {
+impl<'a, Context> Unstasher<'a, Context> {
     /// Create a new instance
-    pub(crate) fn new(backend: UnstasherBackend<'a>) -> Unstasher<'a> {
-        Unstasher { backend }
+    pub(crate) fn new(
+        backend: UnstasherBackend<'a>,
+        context: &'a Context,
+    ) -> Unstasher<'a, Context> {
+        Unstasher { backend, context }
     }
 
     /// Get the backend
@@ -378,7 +428,7 @@ impl<'a> Unstasher<'a> {
     }
 }
 
-impl<'a> Unstasher<'a> {
+impl<'a, Context> Unstasher<'a, Context> {
     /// Read a single bool value
     pub fn bool(&mut self) -> Result<bool, UnstashError> {
         self.backend.read_primitive::<bool>()
@@ -535,25 +585,50 @@ impl<'a> Unstasher<'a> {
     }
 
     /// Read an array of [Unstashable] objects into a vector
-    pub fn array_of_objects_vec<T: 'static + Unstashable>(
+    pub fn array_of_objects_vec<T: 'static + Unstashable<Context = Context>>(
         &mut self,
     ) -> Result<Vec<T>, UnstashError> {
-        self.backend.read_array_of_object_vec()
+        self.array_of_objects_vec_with_context(self.context)
+    }
+
+    pub fn array_of_objects_vec_with_context<T: 'static + Unstashable>(
+        &mut self,
+        context: &'a T::Context,
+    ) -> Result<Vec<T>, UnstashError> {
+        self.backend.read_array_of_object_vec(context)
     }
 
     /// Read an array of [Unstashable] objects into an iterator
-    pub fn array_of_objects_iter<T: 'static + Unstashable>(
+    pub fn array_of_objects_iter<T: 'static + Unstashable<Context = Context>>(
         &mut self,
-    ) -> Result<ObjectIterator<T>, UnstashError> {
-        self.backend.read_array_of_object_iter()
+    ) -> Result<ObjectIterator<Context, T>, UnstashError> {
+        self.array_of_objects_iter_with_context(self.context)
+    }
+
+    pub fn array_of_objects_iter_with_context<T: 'static + Unstashable>(
+        &mut self,
+        context: &'a T::Context,
+    ) -> Result<ObjectIterator<T::Context, T>, UnstashError> {
+        self.backend.read_array_of_object_iter(context)
     }
 
     /// Read an array of objects via a function receiving an [Unstasher] for each object
     pub fn array_of_proxy_objects<F>(&mut self, f: F) -> Result<(), UnstashError>
     where
-        F: FnMut(&mut Unstasher) -> Result<(), UnstashError>,
+        F: FnMut(&mut Unstasher<Context>) -> Result<(), UnstashError>,
     {
-        self.backend.read_array_of_object_proxies(f)
+        self.array_of_proxy_objects_with_context(f, self.context)
+    }
+
+    pub fn array_of_proxy_objects_with_context<OtherContext, F>(
+        &mut self,
+        f: F,
+        context: &'a OtherContext,
+    ) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut Unstasher<OtherContext>) -> Result<(), UnstashError>,
+    {
+        self.backend.read_array_of_object_proxies(f, context)
     }
 
     /// Read a single string
@@ -562,29 +637,57 @@ impl<'a> Unstasher<'a> {
     }
 
     /// Read a single [Unstashable] object
-    pub fn object<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
-        self.backend.object_proxy(T::unstash)
+    pub fn object<T: 'static + Unstashable<Context = Context>>(
+        &mut self,
+    ) -> Result<T, UnstashError> {
+        self.object_with_context(self.context)
+    }
+
+    pub fn object_with_context<T: 'static + Unstashable>(
+        &mut self,
+        context: &'a T::Context,
+    ) -> Result<T, UnstashError> {
+        self.backend.object_proxy(T::unstash, &context)
     }
 
     /// Read a single [UnstashableInplace] object
-    pub fn object_inplace<T: UnstashableInplace>(
+    pub fn object_inplace<T: UnstashableInplace<Context = Context>>(
         &mut self,
         object: &mut T,
     ) -> Result<(), UnstashError> {
+        self.object_inplace_with_context(object, self.context)
+    }
+
+    pub fn object_inplace_with_context<T: UnstashableInplace>(
+        &mut self,
+        object: &mut T,
+        context: &'a T::Context,
+    ) -> Result<(), UnstashError> {
         let backend_original = self.backend.clone();
         self.backend
-            .object_inplace(object, InplaceUnstashPhase::Validate)?;
+            .object_inplace(object, InplaceUnstashPhase::Validate, context)?;
         self.backend = backend_original;
         self.backend
-            .object_inplace(object, InplaceUnstashPhase::Write)
+            .object_inplace(object, InplaceUnstashPhase::Write, context)
     }
 
     /// Read a single object via a function receiving an [Unstasher]
     pub fn object_proxy<T: 'static, F>(&mut self, f: F) -> Result<T, UnstashError>
     where
-        F: FnMut(&mut Unstasher) -> Result<T, UnstashError>,
+        F: FnMut(&mut Unstasher<Context>) -> Result<T, UnstashError>,
     {
-        self.backend.object_proxy(f)
+        self.object_proxy_with_context(f, self.context)
+    }
+
+    pub fn object_proxy_with_context<OtherContext, T: 'static, F>(
+        &mut self,
+        f: F,
+        context: &'a OtherContext,
+    ) -> Result<T, UnstashError>
+    where
+        F: FnMut(&mut Unstasher<OtherContext>) -> Result<T, UnstashError>,
+    {
+        self.backend.object_proxy(f, &context)
     }
 
     /// Read a single object via a function receiving an [InplaceUnstasher].
@@ -592,16 +695,27 @@ impl<'a> Unstasher<'a> {
     /// No lasting changes should be made unless [InplaceUnstasher::time_to_write]
     /// returns true. Data should always be read to catch unstashing errors
     /// during the validation phase, before persistent changes are made.
-    pub fn object_proxy_inplace<F>(&mut self, mut f: F) -> Result<(), UnstashError>
+    pub fn object_proxy_inplace<F>(&mut self, f: F) -> Result<(), UnstashError>
     where
-        F: FnMut(&mut InplaceUnstasher) -> Result<(), UnstashError>,
+        F: FnMut(&mut InplaceUnstasher<Context>) -> Result<(), UnstashError>,
+    {
+        self.object_proxy_inplace_with_context(f, self.context)
+    }
+
+    pub fn object_proxy_inplace_with_context<OtherContext, F>(
+        &mut self,
+        mut f: F,
+        context: &'a OtherContext,
+    ) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut InplaceUnstasher<OtherContext>) -> Result<(), UnstashError>,
     {
         let backend_original = self.backend.clone();
         self.backend
-            .object_proxy_inplace(&mut f, InplaceUnstashPhase::Validate)?;
+            .object_proxy_inplace(&mut f, InplaceUnstashPhase::Validate, context)?;
         self.backend = backend_original;
         self.backend
-            .object_proxy_inplace(&mut f, InplaceUnstashPhase::Write)
+            .object_proxy_inplace(&mut f, InplaceUnstashPhase::Write, context)
     }
 
     /// Get the type of the next value, if one exists
@@ -637,18 +751,24 @@ pub(crate) enum InplaceUnstashPhase {
 
 /// Struct for unstashing and deserializing by modifying existing objects.
 /// This struct is passed to [UnstashableInplace::unstash_inplace]
-pub struct InplaceUnstasher<'a> {
+pub struct InplaceUnstasher<'a, Context> {
     backend: UnstasherBackend<'a>,
     phase: InplaceUnstashPhase,
+    context: &'a Context,
 }
 
-impl<'a> InplaceUnstasher<'a> {
+impl<'a, Context> InplaceUnstasher<'a, Context> {
     /// Create a new unstasher with the given backend and phase
     pub(crate) fn new(
         backend: UnstasherBackend<'a>,
         phase: InplaceUnstashPhase,
-    ) -> InplaceUnstasher<'a> {
-        InplaceUnstasher { backend, phase }
+        context: &'a Context,
+    ) -> InplaceUnstasher<'a, Context> {
+        InplaceUnstasher {
+            backend,
+            phase,
+            context,
+        }
     }
 
     /// Get the backend
@@ -683,7 +803,7 @@ impl<'a> InplaceUnstasher<'a> {
     }
 }
 
-impl<'a> InplaceUnstasher<'a> {
+impl<'a, Context> InplaceUnstasher<'a, Context> {
     /// Read a single bool value. The reference is only written
     /// to during the Write phase.
     pub fn bool_inplace(&mut self, x: &mut bool) -> Result<(), UnstashError> {
@@ -894,11 +1014,19 @@ impl<'a> InplaceUnstasher<'a> {
     /// If you need to work with a different container or need more fine-grained
     /// control over how objects are written to, use [Self::array_of_proxy_objects]
     /// instead.
-    pub fn array_of_objects_vec_inplace<T: 'static + Unstashable>(
+    pub fn array_of_objects_vec_inplace<T: 'static + Unstashable<Context = Context>>(
         &mut self,
         x: &mut Vec<T>,
     ) -> Result<(), UnstashError> {
-        let v = self.backend.read_array_of_object_vec()?;
+        self.array_of_objects_vec_inplace_with_context(x, self.context)
+    }
+
+    pub fn array_of_objects_vec_inplace_with_context<T: 'static + Unstashable>(
+        &mut self,
+        x: &mut Vec<T>,
+        context: &'a T::Context,
+    ) -> Result<(), UnstashError> {
+        let v = self.backend.read_array_of_object_vec(context)?;
         if self.phase == InplaceUnstashPhase::Write {
             *x = v;
         }
@@ -989,9 +1117,20 @@ impl<'a> InplaceUnstasher<'a> {
     /// whether this method is being used correctly.
     pub fn array_of_proxy_objects<F>(&mut self, f: F) -> Result<(), UnstashError>
     where
-        F: FnMut(&mut Unstasher) -> Result<(), UnstashError>,
+        F: FnMut(&mut Unstasher<Context>) -> Result<(), UnstashError>,
     {
-        self.backend.read_array_of_object_proxies(f)
+        self.array_of_proxy_objects_with_context(f, self.context)
+    }
+
+    pub fn array_of_proxy_objects_with_context<OtherContext, F>(
+        &mut self,
+        f: F,
+        context: &'a OtherContext,
+    ) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut Unstasher<OtherContext>) -> Result<(), UnstashError>,
+    {
+        self.backend.read_array_of_object_proxies(f, context)
     }
 
     /// Read a string. The reference is only written to during the Write phase.
@@ -1014,11 +1153,19 @@ impl<'a> InplaceUnstasher<'a> {
     /// Read an object which is [Unstashable]. The reference is only written to
     /// during the Write phase. The existing object is completely overwritten
     /// with the newly-unstashed object.
-    pub fn object_replace<T: 'static + Unstashable>(
+    pub fn object_replace<T: 'static + Unstashable<Context = Context>>(
         &mut self,
         object: &mut T,
     ) -> Result<(), UnstashError> {
-        let other_object = self.backend.object_proxy(T::unstash)?;
+        self.object_replace_with_context(object, self.context)
+    }
+
+    pub fn object_replace_with_context<T: 'static + Unstashable>(
+        &mut self,
+        object: &mut T,
+        context: &'a T::Context,
+    ) -> Result<(), UnstashError> {
+        let other_object = self.backend.object_proxy(T::unstash, context)?;
         if self.phase == InplaceUnstashPhase::Write {
             *object = other_object;
         }
@@ -1028,17 +1175,34 @@ impl<'a> InplaceUnstasher<'a> {
     /// Read an object which is [Unstashable] and return it directly, during
     /// both the validation and write phases. Lasting changes should only be
     /// made when /// [Self::time_to_write] is true.
-    pub fn object_always<T: 'static + Unstashable>(&mut self) -> Result<T, UnstashError> {
-        self.backend.object_proxy(T::unstash)
+    pub fn object_always<T: 'static + Unstashable<Context = Context>>(
+        &mut self,
+    ) -> Result<T, UnstashError> {
+        self.object_always_with_context(self.context)
+    }
+
+    pub fn object_always_with_context<T: 'static + Unstashable>(
+        &mut self,
+        context: &'a T::Context,
+    ) -> Result<T, UnstashError> {
+        self.backend.object_proxy(T::unstash, context)
     }
 
     /// Read an object which is [UnstashableInplace]. The given reference is
     /// itself unstashed in place using the same phase as the current object.
-    pub fn object_inplace<T: UnstashableInplace>(
+    pub fn object_inplace<T: UnstashableInplace<Context = Context>>(
         &mut self,
         object: &mut T,
     ) -> Result<(), UnstashError> {
-        self.backend.object_inplace(object, self.phase)
+        self.object_inplace_with_context(object, self.context)
+    }
+
+    pub fn object_inplace_with_context<T: UnstashableInplace>(
+        &mut self,
+        object: &mut T,
+        context: &'a T::Context,
+    ) -> Result<(), UnstashError> {
+        self.backend.object_inplace(object, self.phase, context)
     }
 
     /// Read an object and with the given function that receives an [Unstasher]
@@ -1055,16 +1219,38 @@ impl<'a> InplaceUnstasher<'a> {
     /// whether this method is being used correctly.
     pub fn object_proxy<R: 'static, F>(&mut self, f: F) -> Result<R, UnstashError>
     where
-        F: FnMut(&mut Unstasher) -> Result<R, UnstashError>,
+        F: FnMut(&mut Unstasher<Context>) -> Result<R, UnstashError>,
     {
-        self.backend.object_proxy(f)
+        self.object_proxy_with_context(f, self.context)
+    }
+
+    pub fn object_proxy_with_context<OtherContext, R: 'static, F>(
+        &mut self,
+        f: F,
+        context: &'a OtherContext,
+    ) -> Result<R, UnstashError>
+    where
+        F: FnMut(&mut Unstasher<OtherContext>) -> Result<R, UnstashError>,
+    {
+        self.backend.object_proxy(f, context)
     }
 
     pub fn object_proxy_inplace<F>(&mut self, f: F) -> Result<(), UnstashError>
     where
-        F: FnMut(&mut InplaceUnstasher) -> Result<(), UnstashError>,
+        F: FnMut(&mut InplaceUnstasher<Context>) -> Result<(), UnstashError>,
     {
-        self.backend.object_proxy_inplace(f, self.phase)
+        self.object_proxy_inplace_with_context(f, self.context)
+    }
+
+    pub fn object_proxy_inplace_with_context<OtherContext, F>(
+        &mut self,
+        f: F,
+        context: &'a OtherContext,
+    ) -> Result<(), UnstashError>
+    where
+        F: FnMut(&mut InplaceUnstasher<OtherContext>) -> Result<(), UnstashError>,
+    {
+        self.backend.object_proxy_inplace(f, self.phase, context)
     }
 
     /// Are we in the write phase, i.e. should lasting changes be made to the
