@@ -732,6 +732,10 @@ impl<'a, Context> Unstasher<'a, Context> {
     pub fn is_empty(&self) -> bool {
         self.backend.is_empty()
     }
+
+    pub fn context(&self) -> &'a Context {
+        self.context
+    }
 }
 
 /// The two phases of in-place unstashing, used to separate validation
@@ -1271,5 +1275,9 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
     /// Is there no data left?
     pub fn is_empty(&self) -> bool {
         self.backend.is_empty()
+    }
+
+    pub fn context(&self) -> &'a Context {
+        self.context
     }
 }
