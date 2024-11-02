@@ -50,10 +50,10 @@ impl<'a> StasherBackend<'a> {
     /// Stash and track a dependency. When hashing, this simply
     /// hashes the object. When serializing, this stashes the
     /// object in the stashmap and adds a reference to it.
-    fn stash_dependency<OtherContext, F: FnMut(&mut Stasher<'_, OtherContext>)>(
+    fn stash_dependency<OtherContext: Copy, F: FnMut(&mut Stasher<'_, OtherContext>)>(
         &mut self,
         f: F,
-        context: &OtherContext,
+        context: OtherContext,
     ) {
         match self {
             StasherBackend::Hash(hasher) => {
@@ -123,7 +123,7 @@ impl<'a> StasherBackend<'a> {
 /// to serialize those contents.
 pub struct Stasher<'a, Context = ()> {
     backend: StasherBackend<'a>,
-    context: &'a Context,
+    context: Context,
 }
 
 /// Private methods
@@ -133,7 +133,7 @@ impl<'a, Context> Stasher<'a, Context> {
         data: &'a mut Vec<u8>,
         dependencies: &'a mut Vec<ObjectHash>,
         stashmap: &'a mut StashMap,
-        context: &'a Context,
+        context: Context,
     ) -> Stasher<'a, Context> {
         Stasher {
             backend: StasherBackend::Serialize(SerializingStasher {
@@ -148,7 +148,7 @@ impl<'a, Context> Stasher<'a, Context> {
     /// Create a new Stasher for hashing
     pub(crate) fn new_hasher(
         hasher: &'a mut seahash::SeaHasher,
-        context: &'a Context,
+        context: Context,
     ) -> Stasher<'a, Context> {
         Stasher {
             backend: StasherBackend::Hash(HashingStasher {
@@ -193,7 +193,7 @@ impl<'a, Context> Stasher<'a, Context> {
 }
 
 /// Public methods
-impl<'a, Context> Stasher<'a, Context> {
+impl<'a, Context: Copy> Stasher<'a, Context> {
     /// Write a single bool value
     pub fn bool(&mut self, x: bool) {
         self.write_primitive::<bool>(x);
@@ -356,7 +356,7 @@ impl<'a, Context> Stasher<'a, Context> {
             .stash_dependency(|stasher| object.stash(stasher), self.context);
     }
 
-    pub fn object_with_context<C1, T: Stashable<C1>>(&mut self, object: &T, context: &C1) {
+    pub fn object_with_context<C1: Copy, T: Stashable<C1>>(&mut self, object: &T, context: C1) {
         self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
         self.backend
             .stash_dependency(|stasher| object.stash(stasher), context);
@@ -371,7 +371,7 @@ impl<'a, Context> Stasher<'a, Context> {
         self.backend.stash_dependency(f, self.context);
     }
 
-    pub fn object_proxy_with_context<OtherContext, F>(&mut self, f: F, context: &OtherContext)
+    pub fn object_proxy_with_context<OtherContext: Copy, F>(&mut self, f: F, context: OtherContext)
     where
         F: FnMut(&mut Stasher<'_, OtherContext>),
     {
@@ -384,11 +384,11 @@ impl<'a, Context> Stasher<'a, Context> {
         self.array_of_objects_iter_with_context(objects.iter(), order, self.context);
     }
 
-    pub fn array_of_objects_slice_with_context<C1, T: Stashable<C1>>(
+    pub fn array_of_objects_slice_with_context<C1: Copy, T: Stashable<C1>>(
         &mut self,
         objects: &[T],
         order: Order,
-        context: &C1,
+        context: C1,
     ) {
         self.array_of_objects_iter_with_context(objects.iter(), order, context);
     }
@@ -404,14 +404,14 @@ impl<'a, Context> Stasher<'a, Context> {
 
     pub fn array_of_objects_iter_with_context<
         'b,
-        C1,
+        C1: Copy,
         T: 'b + Stashable<C1>,
         I: Iterator<Item = &'b T>,
     >(
         &mut self,
         it: I,
         order: Order,
-        context: &C1,
+        context: C1,
     ) {
         self.backend
             .write_raw_bytes(&[ValueType::ArrayOfObjects.to_byte()]);
@@ -434,12 +434,12 @@ impl<'a, Context> Stasher<'a, Context> {
         self.array_of_proxy_objects_with_context(it, f, order, self.context);
     }
 
-    pub fn array_of_proxy_objects_with_context<OtherContext, T, I: Iterator<Item = T>, F>(
+    pub fn array_of_proxy_objects_with_context<OtherContext: Copy, T, I: Iterator<Item = T>, F>(
         &mut self,
         it: I,
         mut f: F,
         order: Order,
-        context: &OtherContext,
+        context: OtherContext,
     ) where
         F: FnMut(&T, &mut Stasher<'_, OtherContext>),
     {
@@ -466,7 +466,7 @@ impl<'a, Context> Stasher<'a, Context> {
         self.backend.end_sequence(bookmark, bytes.len() as u32);
     }
 
-    pub fn context(&self) -> &'a Context {
+    pub fn context(&self) -> Context {
         self.context
     }
 }

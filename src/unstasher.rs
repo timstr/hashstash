@@ -51,11 +51,11 @@ impl<'a, T: PrimitiveReadWrite> ExactSizeIterator for PrimitiveIterator<'a, T> {
 pub struct ObjectIterator<'a, C, T> {
     hashes: &'a [ObjectHash],
     stashmap: &'a StashMap,
-    context: &'a C,
+    context: C,
     _phantom_data: PhantomData<T>,
 }
 
-impl<'a, C, T: Unstashable<C>> Iterator for ObjectIterator<'a, C, T> {
+impl<'a, C: Copy, T: Unstashable<C>> Iterator for ObjectIterator<'a, C, T> {
     type Item = Result<T, UnstashError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -163,13 +163,13 @@ impl<'a> UnstasherBackend<'a> {
     /// rollback the position in the underlying byte vector
     /// if it failed.
     fn reset_on_error<
-        Context,
-        T: 'a,
-        F: FnOnce(&mut UnstasherBackend<'a>, &'a Context) -> Result<T, UnstashError>,
+        Context: Copy,
+        T,
+        F: FnOnce(&mut UnstasherBackend<'a>, Context) -> Result<T, UnstashError>,
     >(
         &mut self,
         f: F,
-        context: &'a Context,
+        context: Context,
     ) -> Result<T, UnstashError> {
         let original = self.clone();
         let result = f(self, context);
@@ -190,7 +190,7 @@ impl<'a> UnstasherBackend<'a> {
                 let x = T::read_raw_bytes_from(&mut unstasher.bytes);
                 Ok(x)
             },
-            &(),
+            (),
         )
     }
 
@@ -222,22 +222,22 @@ impl<'a> UnstasherBackend<'a> {
                 unstasher.bytes = &unstasher.bytes[num_bytes..];
                 Ok(iterator)
             },
-            &(),
+            (),
         )
     }
 
     /// Read an array of [Unstashable] objects into a vector
-    fn read_array_of_object_vec<C, T: 'static + Unstashable<C>>(
+    fn read_array_of_object_vec<C: Copy, T: 'static + Unstashable<C>>(
         &mut self,
-        context: &'a C,
+        context: C,
     ) -> Result<Vec<T>, UnstashError> {
         self.read_array_of_object_iter(context)?.collect()
     }
 
     /// Read an array of [Unstashable] objects via an iterator
-    fn read_array_of_object_iter<C, T: 'static + Unstashable<C>>(
+    fn read_array_of_object_iter<C: Copy, T: 'static + Unstashable<C>>(
         &mut self,
-        context: &'a C,
+        context: C,
     ) -> Result<ObjectIterator<'a, C, T>, UnstashError> {
         self.reset_on_error(
             |unstasher, context| {
@@ -266,12 +266,12 @@ impl<'a> UnstasherBackend<'a> {
     /// Read an array of stashed objects via the given function which
     /// is called once per object with an [Unstasher] instance.
     fn read_array_of_object_proxies<
-        Context,
+        Context: Copy,
         F: FnMut(&mut Unstasher<Context>) -> Result<(), UnstashError>,
     >(
         &mut self,
         mut f: F,
-        context: &'a Context,
+        context: Context,
     ) -> Result<(), UnstashError> {
         self.reset_on_error(
             |unstasher, context| {
@@ -295,11 +295,11 @@ impl<'a> UnstasherBackend<'a> {
     }
 
     /// Read a single given [UnstashableInplace] object with the given phase
-    fn object_inplace<C, T: UnstashableInplace<C>>(
+    fn object_inplace<C: Copy, T: UnstashableInplace<C>>(
         &mut self,
         object: &mut T,
         phase: InplaceUnstashPhase,
-        context: &'a C,
+        context: C,
     ) -> Result<(), UnstashError> {
         self.reset_on_error(
             |unstasher, context| {
@@ -320,10 +320,10 @@ impl<'a> UnstasherBackend<'a> {
     }
 
     /// Read a single object via a given function that receives an [Unstasher]
-    fn object_proxy<Context, R: 'static, F>(
+    fn object_proxy<Context: Copy, R: 'static, F>(
         &mut self,
         f: F,
-        context: &'a Context,
+        context: Context,
     ) -> Result<R, UnstashError>
     where
         F: FnMut(&mut Unstasher<Context>) -> Result<R, UnstashError>,
@@ -342,11 +342,11 @@ impl<'a> UnstasherBackend<'a> {
     }
 
     /// Read a single object via a given function that receives an [InplaceUnstasher]
-    fn object_proxy_inplace<Context, F>(
+    fn object_proxy_inplace<Context: Copy, F>(
         &mut self,
         f: F,
         phase: InplaceUnstashPhase,
-        context: &'a Context,
+        context: Context,
     ) -> Result<(), UnstashError>
     where
         F: FnMut(&mut InplaceUnstasher<Context>) -> Result<(), UnstashError>,
@@ -377,7 +377,7 @@ impl<'a> UnstasherBackend<'a> {
                 let str_slice = std::str::from_utf8(slice).map_err(|_| UnstashError::Corrupted)?;
                 Ok(str_slice.to_string())
             },
-            &(),
+            (),
         )
     }
 
@@ -410,15 +410,12 @@ impl<'a> UnstasherBackend<'a> {
 /// This struct is passed to [Unstashable::unstash]
 pub struct Unstasher<'a, Context = ()> {
     backend: UnstasherBackend<'a>,
-    context: &'a Context,
+    context: Context,
 }
 
 impl<'a, Context> Unstasher<'a, Context> {
     /// Create a new instance
-    pub(crate) fn new(
-        backend: UnstasherBackend<'a>,
-        context: &'a Context,
-    ) -> Unstasher<'a, Context> {
+    pub(crate) fn new(backend: UnstasherBackend<'a>, context: Context) -> Unstasher<'a, Context> {
         Unstasher { backend, context }
     }
 
@@ -428,7 +425,7 @@ impl<'a, Context> Unstasher<'a, Context> {
     }
 }
 
-impl<'a, Context> Unstasher<'a, Context> {
+impl<'a, Context: Copy> Unstasher<'a, Context> {
     /// Read a single bool value
     pub fn bool(&mut self) -> Result<bool, UnstashError> {
         self.backend.read_primitive::<bool>()
@@ -591,9 +588,9 @@ impl<'a, Context> Unstasher<'a, Context> {
         self.array_of_objects_vec_with_context(self.context)
     }
 
-    pub fn array_of_objects_vec_with_context<C1, T: 'static + Unstashable<C1>>(
+    pub fn array_of_objects_vec_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
         &mut self,
-        context: &'a C1,
+        context: C1,
     ) -> Result<Vec<T>, UnstashError> {
         self.backend.read_array_of_object_vec(context)
     }
@@ -605,9 +602,9 @@ impl<'a, Context> Unstasher<'a, Context> {
         self.array_of_objects_iter_with_context(self.context)
     }
 
-    pub fn array_of_objects_iter_with_context<C1, T: 'static + Unstashable<C1>>(
+    pub fn array_of_objects_iter_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
         &mut self,
-        context: &'a C1,
+        context: C1,
     ) -> Result<ObjectIterator<C1, T>, UnstashError> {
         self.backend.read_array_of_object_iter(context)
     }
@@ -620,10 +617,10 @@ impl<'a, Context> Unstasher<'a, Context> {
         self.array_of_proxy_objects_with_context(f, self.context)
     }
 
-    pub fn array_of_proxy_objects_with_context<OtherContext, F>(
+    pub fn array_of_proxy_objects_with_context<OtherContext: Copy, F>(
         &mut self,
         f: F,
-        context: &'a OtherContext,
+        context: OtherContext,
     ) -> Result<(), UnstashError>
     where
         F: FnMut(&mut Unstasher<OtherContext>) -> Result<(), UnstashError>,
@@ -641,11 +638,11 @@ impl<'a, Context> Unstasher<'a, Context> {
         self.object_with_context(self.context)
     }
 
-    pub fn object_with_context<C1, T: 'static + Unstashable<C1>>(
+    pub fn object_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
         &mut self,
-        context: &'a C1,
+        context: C1,
     ) -> Result<T, UnstashError> {
-        self.backend.object_proxy(T::unstash, &context)
+        self.backend.object_proxy(T::unstash, context)
     }
 
     /// Read a single [UnstashableInplace] object
@@ -656,10 +653,10 @@ impl<'a, Context> Unstasher<'a, Context> {
         self.object_inplace_with_context(object, self.context)
     }
 
-    pub fn object_inplace_with_context<C1, T: UnstashableInplace<C1>>(
+    pub fn object_inplace_with_context<C1: Copy, T: UnstashableInplace<C1>>(
         &mut self,
         object: &mut T,
-        context: &'a C1,
+        context: C1,
     ) -> Result<(), UnstashError> {
         let backend_original = self.backend.clone();
         self.backend
@@ -677,15 +674,15 @@ impl<'a, Context> Unstasher<'a, Context> {
         self.object_proxy_with_context(f, self.context)
     }
 
-    pub fn object_proxy_with_context<OtherContext, T: 'static, F>(
+    pub fn object_proxy_with_context<OtherContext: Copy, T: 'static, F>(
         &mut self,
         f: F,
-        context: &'a OtherContext,
+        context: OtherContext,
     ) -> Result<T, UnstashError>
     where
         F: FnMut(&mut Unstasher<OtherContext>) -> Result<T, UnstashError>,
     {
-        self.backend.object_proxy(f, &context)
+        self.backend.object_proxy(f, context)
     }
 
     /// Read a single object via a function receiving an [InplaceUnstasher].
@@ -700,10 +697,10 @@ impl<'a, Context> Unstasher<'a, Context> {
         self.object_proxy_inplace_with_context(f, self.context)
     }
 
-    pub fn object_proxy_inplace_with_context<OtherContext, F>(
+    pub fn object_proxy_inplace_with_context<OtherContext: Copy, F>(
         &mut self,
         mut f: F,
-        context: &'a OtherContext,
+        context: OtherContext,
     ) -> Result<(), UnstashError>
     where
         F: FnMut(&mut InplaceUnstasher<OtherContext>) -> Result<(), UnstashError>,
@@ -733,7 +730,7 @@ impl<'a, Context> Unstasher<'a, Context> {
         self.backend.is_empty()
     }
 
-    pub fn context(&self) -> &'a Context {
+    pub fn context(&self) -> Context {
         self.context
     }
 }
@@ -756,7 +753,7 @@ pub(crate) enum InplaceUnstashPhase {
 pub struct InplaceUnstasher<'a, Context = ()> {
     backend: UnstasherBackend<'a>,
     phase: InplaceUnstashPhase,
-    context: &'a Context,
+    context: Context,
 }
 
 impl<'a, Context> InplaceUnstasher<'a, Context> {
@@ -764,7 +761,7 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
     pub(crate) fn new(
         backend: UnstasherBackend<'a>,
         phase: InplaceUnstashPhase,
-        context: &'a Context,
+        context: Context,
     ) -> InplaceUnstasher<'a, Context> {
         InplaceUnstasher {
             backend,
@@ -805,7 +802,7 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
     }
 }
 
-impl<'a, Context> InplaceUnstasher<'a, Context> {
+impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
     /// Read a single bool value. The reference is only written
     /// to during the Write phase.
     pub fn bool_inplace(&mut self, x: &mut bool) -> Result<(), UnstashError> {
@@ -1023,10 +1020,10 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
         self.array_of_objects_vec_inplace_with_context(x, self.context)
     }
 
-    pub fn array_of_objects_vec_inplace_with_context<C1, T: 'static + Unstashable<C1>>(
+    pub fn array_of_objects_vec_inplace_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
         &mut self,
         x: &mut Vec<T>,
-        context: &'a C1,
+        context: C1,
     ) -> Result<(), UnstashError> {
         let v = self.backend.read_array_of_object_vec(context)?;
         if self.phase == InplaceUnstashPhase::Write {
@@ -1124,10 +1121,10 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
         self.array_of_proxy_objects_with_context(f, self.context)
     }
 
-    pub fn array_of_proxy_objects_with_context<OtherContext, F>(
+    pub fn array_of_proxy_objects_with_context<OtherContext: Copy, F>(
         &mut self,
         f: F,
-        context: &'a OtherContext,
+        context: OtherContext,
     ) -> Result<(), UnstashError>
     where
         F: FnMut(&mut Unstasher<OtherContext>) -> Result<(), UnstashError>,
@@ -1162,10 +1159,10 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
         self.object_replace_with_context(object, self.context)
     }
 
-    pub fn object_replace_with_context<C1, T: 'static + Unstashable<C1>>(
+    pub fn object_replace_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
         &mut self,
         object: &mut T,
-        context: &'a C1,
+        context: C1,
     ) -> Result<(), UnstashError> {
         let other_object = self.backend.object_proxy(T::unstash, context)?;
         if self.phase == InplaceUnstashPhase::Write {
@@ -1181,9 +1178,9 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
         self.object_always_with_context(self.context)
     }
 
-    pub fn object_always_with_context<C1, T: 'static + Unstashable<C1>>(
+    pub fn object_always_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
         &mut self,
-        context: &'a C1,
+        context: C1,
     ) -> Result<T, UnstashError> {
         self.backend.object_proxy(T::unstash, context)
     }
@@ -1197,10 +1194,10 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
         self.object_inplace_with_context(object, self.context)
     }
 
-    pub fn object_inplace_with_context<C1, T: UnstashableInplace<C1>>(
+    pub fn object_inplace_with_context<C1: Copy, T: UnstashableInplace<C1>>(
         &mut self,
         object: &mut T,
-        context: &'a C1,
+        context: C1,
     ) -> Result<(), UnstashError> {
         self.backend.object_inplace(object, self.phase, context)
     }
@@ -1224,10 +1221,10 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
         self.object_proxy_with_context(f, self.context)
     }
 
-    pub fn object_proxy_with_context<OtherContext, R: 'static, F>(
+    pub fn object_proxy_with_context<OtherContext: Copy, R: 'static, F>(
         &mut self,
         f: F,
-        context: &'a OtherContext,
+        context: OtherContext,
     ) -> Result<R, UnstashError>
     where
         F: FnMut(&mut Unstasher<OtherContext>) -> Result<R, UnstashError>,
@@ -1242,10 +1239,10 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
         self.object_proxy_inplace_with_context(f, self.context)
     }
 
-    pub fn object_proxy_inplace_with_context<OtherContext, F>(
+    pub fn object_proxy_inplace_with_context<OtherContext: Copy, F>(
         &mut self,
         f: F,
-        context: &'a OtherContext,
+        context: OtherContext,
     ) -> Result<(), UnstashError>
     where
         F: FnMut(&mut InplaceUnstasher<OtherContext>) -> Result<(), UnstashError>,
@@ -1277,7 +1274,7 @@ impl<'a, Context> InplaceUnstasher<'a, Context> {
         self.backend.is_empty()
     }
 
-    pub fn context(&self) -> &'a Context {
+    pub fn context(&self) -> Context {
         self.context
     }
 }

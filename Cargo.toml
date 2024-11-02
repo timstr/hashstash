@@ -1,6 +1,6 @@
 [package]
 name = "hashstash"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "It's like git but for your Rust data structures."
 repository = "https://github.com/timstr/hashstash"

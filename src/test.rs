@@ -377,19 +377,19 @@ fn test_roundtrip_nested() {
         s.s.push('z');
     };
 
-    assert_eq!(test_stash_roundtrip(create_a, modify_a_i, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_a, modify_a_x, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_a, modify_a_s, &(), &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_i, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_x, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_a, modify_a_s, (), ()), Ok(()));
     assert_eq!(
-        test_stash_roundtrip_inplace(create_a, modify_a_i, &(), &()),
+        test_stash_roundtrip_inplace(create_a, modify_a_i, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_a, modify_a_x, &(), &()),
+        test_stash_roundtrip_inplace(create_a, modify_a_x, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_a, modify_a_s, &(), &()),
+        test_stash_roundtrip_inplace(create_a, modify_a_s, (), ()),
         Ok(())
     );
 
@@ -423,29 +423,29 @@ fn test_roundtrip_nested() {
     let modify_b_a2 = |s: &mut StructB| s.a2.x ^= 0b101;
     let modify_b_a3 = |s: &mut StructB| s.a3.s.push_str("blah");
 
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_b, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_u, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_a1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_a2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(make_b, modify_b_a3, &(), &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_b, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_u, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(make_b, modify_b_a3, (), ()), Ok(()));
     assert_eq!(
-        test_stash_roundtrip_inplace(make_b, modify_b_b, &(), &()),
+        test_stash_roundtrip_inplace(make_b, modify_b_b, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(make_b, modify_b_u, &(), &()),
+        test_stash_roundtrip_inplace(make_b, modify_b_u, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(make_b, modify_b_a1, &(), &()),
+        test_stash_roundtrip_inplace(make_b, modify_b_a1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(make_b, modify_b_a2, &(), &()),
+        test_stash_roundtrip_inplace(make_b, modify_b_a2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(make_b, modify_b_a3, &(), &()),
+        test_stash_roundtrip_inplace(make_b, modify_b_a3, (), ()),
         Ok(())
     );
 }
@@ -520,50 +520,50 @@ fn test_roundtrip_struct_with_vecs() {
     let modify_2 = |s: &mut StructWithVecs| s.vec_i32.push(99);
     let modify_3 = |s: &mut StructWithVecs| s.vec_u8.extend_from_slice(&[1, 2, 3]);
 
-    assert_eq!(test_stash_roundtrip(create_1, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_1, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_1, modify_3, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_3, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_3, &(), &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_3, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_3, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_3, (), ()), Ok(()));
 
     assert_eq!(
-        test_stash_roundtrip_inplace(create_1, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_1, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_1, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_1, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_1, modify_3, &(), &()),
+        test_stash_roundtrip_inplace(create_1, modify_3, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_2, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_2, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_2, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_2, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_2, modify_3, &(), &()),
+        test_stash_roundtrip_inplace(create_2, modify_3, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_3, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_3, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_3, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_3, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_3, modify_3, &(), &()),
+        test_stash_roundtrip_inplace(create_3, modify_3, (), ()),
         Ok(())
     );
 }
@@ -709,45 +709,45 @@ fn test_roundtrip_vec_of_objects() {
         s.objects.reverse();
     };
 
-    assert_eq!(test_stash_roundtrip(create_1, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_4, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_1, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_4, modify_2, &(), &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_4, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_4, modify_2, (), ()), Ok(()));
 
     assert_eq!(
-        test_stash_roundtrip_inplace(create_1, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_1, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_2, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_2, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_3, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_3, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_4, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_4, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_1, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_1, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_2, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_2, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_3, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_3, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_4, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_4, modify_2, (), ()),
         Ok(())
     );
 }
@@ -858,19 +858,19 @@ fn test_roundtrip_hashset_of_basic_objects() {
         s.objects.retain(|a| a.i % 2 == 0);
     };
 
-    assert_eq!(test_stash_roundtrip(create, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create, modify_3, &(), &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_3, (), ()), Ok(()));
     assert_eq!(
-        test_stash_roundtrip_inplace(create, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create, modify_3, &(), &()),
+        test_stash_roundtrip_inplace(create, modify_3, (), ()),
         Ok(())
     );
 }
@@ -1004,19 +1004,19 @@ fn test_roundtrip_weird_container() {
         s.container.foreach_mut(|a| a.x *= 2);
     };
 
-    assert_eq!(test_stash_roundtrip(create, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create, modify_3, &(), &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create, modify_3, (), ()), Ok(()));
     assert_eq!(
-        test_stash_roundtrip_inplace(create, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create, modify_3, &(), &()),
+        test_stash_roundtrip_inplace(create, modify_3, (), ()),
         Ok(())
     );
 }
@@ -1227,35 +1227,35 @@ fn test_graph_roundtrip() {
         }
     };
 
-    assert_eq!(test_stash_roundtrip(create_1, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_1, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_1, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_2, modify_2, &(), &()), Ok(()));
-    assert_eq!(test_stash_roundtrip(create_3, modify_2, &(), &()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_1, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_1, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_2, modify_2, (), ()), Ok(()));
+    assert_eq!(test_stash_roundtrip(create_3, modify_2, (), ()), Ok(()));
 
     assert_eq!(
-        test_stash_roundtrip_inplace(create_1, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_1, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_2, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_2, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_3, modify_1, &(), &()),
+        test_stash_roundtrip_inplace(create_3, modify_1, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_1, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_1, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_2, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_2, modify_2, (), ()),
         Ok(())
     );
     assert_eq!(
-        test_stash_roundtrip_inplace(create_3, modify_2, &(), &()),
+        test_stash_roundtrip_inplace(create_3, modify_2, (), ()),
         Ok(())
     );
 }

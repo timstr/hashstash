@@ -66,7 +66,7 @@ impl<T: ?Sized> DerefMut for HashCache<T> {
     }
 }
 
-impl<C, T: ?Sized + Stashable<C>> Stashable<C> for HashCache<T>
+impl<C: Copy, T: ?Sized + Stashable<C>> Stashable<C> for HashCache<T>
 where
     C: Stashable<()>,
 {
@@ -76,7 +76,7 @@ where
             // and save it if not cached
 
             // hash the context
-            let context_hash = ObjectHash::from_stashable(stasher.context());
+            let context_hash = ObjectHash::from_stashable(&stasher.context());
 
             let mut next_empty_entry = None;
 
@@ -160,10 +160,10 @@ impl<T> HashCacheProperty<T> {
         F: Fn(A0) -> T,
         A0: Stashable<()>,
     {
-        self.refresh1_with_context(f, arg0, &());
+        self.refresh1_with_context(f, arg0, ());
     }
 
-    pub fn refresh1_with_context<C, F, A0>(&mut self, f: F, arg0: A0, context: &C)
+    pub fn refresh1_with_context<C, F, A0>(&mut self, f: F, arg0: A0, context: C)
     where
         F: Fn(A0) -> T,
         A0: Stashable<C>,
@@ -186,11 +186,16 @@ impl<T> HashCacheProperty<T> {
         A0: Stashable<()>,
         A1: Stashable<()>,
     {
-        self.refresh2_with_context(f, arg0, arg1, &());
+        self.refresh2_with_context(f, arg0, arg1, ());
     }
 
-    pub fn refresh2_with_context<C, F, A0, A1>(&mut self, f: F, arg0: A0, arg1: A1, context: &C)
-    where
+    pub fn refresh2_with_context<C: Copy, F, A0, A1>(
+        &mut self,
+        f: F,
+        arg0: A0,
+        arg1: A1,
+        context: C,
+    ) where
         F: Fn(A0, A1) -> T,
         A0: Stashable<C>,
         A1: Stashable<C>,
@@ -217,16 +222,16 @@ impl<T> HashCacheProperty<T> {
         A1: Stashable<()>,
         A2: Stashable<()>,
     {
-        self.refresh3_with_context(f, arg0, arg1, arg2, &());
+        self.refresh3_with_context(f, arg0, arg1, arg2, ());
     }
 
-    pub fn refresh3_with_context<C, F, A0, A1, A2>(
+    pub fn refresh3_with_context<C: Copy, F, A0, A1, A2>(
         &mut self,
         f: F,
         arg0: A0,
         arg1: A1,
         arg2: A2,
-        context: &C,
+        context: C,
     ) where
         F: Fn(A0, A1, A2) -> T,
         A0: Stashable<C>,
@@ -257,17 +262,17 @@ impl<T> HashCacheProperty<T> {
         A2: Stashable<()>,
         A3: Stashable<()>,
     {
-        self.refresh4_with_context(f, arg0, arg1, arg2, arg3, &());
+        self.refresh4_with_context(f, arg0, arg1, arg2, arg3, ());
     }
 
-    pub fn refresh4_with_context<C, F, A0, A1, A2, A3>(
+    pub fn refresh4_with_context<C: Copy, F, A0, A1, A2, A3>(
         &mut self,
         f: F,
         arg0: A0,
         arg1: A1,
         arg2: A2,
         arg3: A3,
-        context: &C,
+        context: C,
     ) where
         F: Fn(A0, A1, A2, A3) -> T,
         A0: Stashable<C>,
@@ -308,10 +313,10 @@ impl<T> HashCacheProperty<T> {
         A3: Stashable<()>,
         A4: Stashable<()>,
     {
-        self.refresh5_with_context(f, arg0, arg1, arg2, arg3, arg4, &());
+        self.refresh5_with_context(f, arg0, arg1, arg2, arg3, arg4, ());
     }
 
-    pub fn refresh5_with_context<C, F, A0, A1, A2, A3, A4>(
+    pub fn refresh5_with_context<C: Copy, F, A0, A1, A2, A3, A4>(
         &mut self,
         f: F,
         arg0: A0,
@@ -319,7 +324,7 @@ impl<T> HashCacheProperty<T> {
         arg2: A2,
         arg3: A3,
         arg4: A4,
-        context: &C,
+        context: C,
     ) where
         F: Fn(A0, A1, A2, A3, A4) -> T,
         A0: Stashable<C>,
