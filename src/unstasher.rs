@@ -1171,6 +1171,50 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
         Ok(())
     }
 
+    pub fn direct_replace<T: 'static + Unstashable<Context>>(
+        &mut self,
+        object: &mut T,
+    ) -> Result<(), UnstashError> {
+        self.direct_replace_with_context(object, self.context)
+    }
+
+    pub fn direct_replace_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
+        &mut self,
+        object: &mut T,
+        context: C1,
+    ) -> Result<(), UnstashError> {
+        // Create a temporary backend to swap in with that of self
+        let placeholder_backend = UnstasherBackend {
+            bytes: &[],
+            dependencies: &[],
+            stashmap: self.backend.stashmap,
+        };
+        let other_unstasher = Unstasher {
+            backend: placeholder_backend,
+            context,
+        };
+        self.direct_replace_impl(object, other_unstasher)
+    }
+
+    fn direct_replace_impl<C1: Copy, T: 'static + Unstashable<C1>>(
+        &mut self,
+        object: &mut T,
+        mut other_unstasher: Unstasher<'a, C1>,
+    ) -> Result<(), UnstashError> {
+        std::mem::swap(&mut self.backend, &mut other_unstasher.backend);
+        let res = T::unstash(&mut other_unstasher);
+        std::mem::swap(&mut self.backend, &mut other_unstasher.backend);
+        match res {
+            Ok(obj) => {
+                if self.time_to_write() {
+                    *object = obj;
+                }
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Read an object which is [Unstashable] and return it directly, during
     /// both the validation and write phases. Lasting changes should only be
     /// made when /// [Self::time_to_write] is true.
