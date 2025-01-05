@@ -75,6 +75,15 @@ impl<'a> StasherBackend<'a> {
                 }
             }
             StasherBackend::Serialize(serializer) => {
+                // TODO: consider adding a small object optimization.
+                // For example if the serialized object contents take
+                // up no more space than a reference to the contents
+                // elsewhere in the stashmap, then just store the contents
+                // directly rather than adding a dependency. This
+                // could be done cleverly by first extending the
+                // hashing backend to sum the content size, allowing
+                // this decision to be made after the ObjectHash has
+                // been computed but before the stashmap is modified.
                 let hash = serializer.stashmap.stash_and_add_reference(f, context);
                 serializer.dependencies.push(hash);
             }
@@ -362,9 +371,7 @@ impl<'a, Context: Copy> Stasher<'a, Context> {
 
     /// Write a single [Stashable] object
     pub fn object<T: Stashable<Context>>(&mut self, object: &T) {
-        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        self.backend
-            .stash_dependency(|stasher| object.stash(stasher), self.context);
+        self.object_with_context(object, self.context);
     }
 
     pub fn object_with_context<C1: Copy, T: Stashable<C1>>(&mut self, object: &T, context: C1) {
@@ -378,8 +385,7 @@ impl<'a, Context: Copy> Stasher<'a, Context> {
     where
         F: FnMut(&mut Stasher<'_, Context>),
     {
-        self.write_raw_bytes(&[ValueType::StashedObject.to_byte()]);
-        self.backend.stash_dependency(f, self.context);
+        self.object_proxy_with_context(f, self.context);
     }
 
     pub fn object_proxy_with_context<OtherContext: Copy, F>(&mut self, f: F, context: OtherContext)
