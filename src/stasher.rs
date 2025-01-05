@@ -10,25 +10,36 @@ struct HashingStasher<'a> {
 
 /// A [Stasher] backend which serializes the object contents
 struct SerializingStasher<'a> {
+    /// Vector of bytes into which new raw data will be written
     data: &'a mut Vec<u8>,
+
+    /// List of explicit dependencies to other stashed objects
+    /// that object hashes will be added to
     dependencies: &'a mut Vec<ObjectHash>,
+
+    /// The stashmap into which we are serializing
     stashmap: &'a mut StashMap,
 }
 
 /// The backend implementation of a [Stasher]
 enum StasherBackend<'a> {
+    /// Stashing and hashing, reading object contents only to
+    /// compute an ObjectHash summary.
     Hash(HashingStasher<'a>),
+
+    /// Stashing and serializing, reading object contents and
+    /// persisting them into a Stash.
     Serialize(SerializingStasher<'a>),
 }
 
 /// Whether order matters for an array of stashed objects
 pub enum Order {
     /// Order matters. Permuting the objects results in
-    /// a different object.
+    /// a different ObjectHash.
     Ordered,
 
     /// Order does not matter. Permuting the objects results
-    /// in an equivalent object.
+    /// in an equivalent ObjectHash.
     Unordered,
 }
 

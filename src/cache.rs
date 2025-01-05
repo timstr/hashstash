@@ -9,6 +9,7 @@ use crate::{
     UnstashableInplace, Unstasher,
 };
 
+/// Helper method to combine multiple hashes
 fn combine_hashes(hashes: &[ObjectHash]) -> ObjectHash {
     let mut hasher = seahash::SeaHasher::new();
     for hash in hashes {
@@ -17,9 +18,14 @@ fn combine_hashes(hashes: &[ObjectHash]) -> ObjectHash {
     ObjectHash(hasher.finish())
 }
 
+/// Cache entry for storing pre-computed object hashes
 #[derive(Copy, Clone)]
 struct HashCacheEntry {
+    /// The hash of the context that the object was hashed with.
+    /// This is needed in case the object hash is context sensitive.
     context_hash: ObjectHash,
+
+    /// The stored object hash
     object_hash: ObjectHash,
 }
 
@@ -27,27 +33,26 @@ struct HashCacheEntry {
 /// the hash value of that object between repeated non-mutable
 /// accesses. Mutably accessing the stored object invalidates
 /// the cached hash value, which is only recomputed as needed.
-pub struct HashCache<T: ?Sized> {
+pub struct HashCache<T: ?Sized, const N: usize = 1> {
     /// The cached hash
-    // TODO: make this size adjustable?
-    entries: [Cell<Option<HashCacheEntry>>; 2],
+    entries: [Cell<Option<HashCacheEntry>>; N],
 
     /// The stored object
     value: T,
 }
 
-impl<T> HashCache<T> {
+impl<T, const N: usize> HashCache<T, N> {
     /// Create a new HashCache with the given value.
     /// The hash is not yet computed or cached.
-    pub fn new(value: T) -> HashCache<T> {
+    pub fn new(value: T) -> HashCache<T, N> {
         HashCache {
-            entries: [Cell::new(None), Cell::new(None)],
+            entries: [const { Cell::new(None) }; N],
             value,
         }
     }
 }
 
-impl<T: ?Sized> Deref for HashCache<T> {
+impl<T: ?Sized, const N: usize> Deref for HashCache<T, N> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -55,9 +60,10 @@ impl<T: ?Sized> Deref for HashCache<T> {
     }
 }
 
-impl<T: ?Sized> DerefMut for HashCache<T> {
+impl<T: ?Sized, const N: usize> DerefMut for HashCache<T, N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        // Invalidate the cached hash
+        // Invalidate the cached hashes so that they will be recomputed
+        // during the next immutable access
         for entry in &self.entries {
             entry.set(None);
         }
@@ -66,7 +72,7 @@ impl<T: ?Sized> DerefMut for HashCache<T> {
     }
 }
 
-impl<C: Copy, T: ?Sized + Stashable<C>> Stashable<C> for HashCache<T>
+impl<C: Copy, T: ?Sized + Stashable<C>, const N: usize> Stashable<C> for HashCache<T, N>
 where
     C: Stashable<()>,
 {
@@ -111,13 +117,13 @@ where
     }
 }
 
-impl<C, T: Unstashable<C>> Unstashable<C> for HashCache<T> {
+impl<C, T: Unstashable<C>, const N: usize> Unstashable<C> for HashCache<T, N> {
     fn unstash(unstasher: &mut Unstasher<C>) -> Result<Self, UnstashError> {
         Ok(HashCache::new(T::unstash(unstasher)?))
     }
 }
 
-impl<C, T: UnstashableInplace<C>> UnstashableInplace<C> for HashCache<T> {
+impl<C, T: UnstashableInplace<C>, const N: usize> UnstashableInplace<C> for HashCache<T, N> {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher<C>) -> Result<(), UnstashError> {
         self.deref_mut().unstash_inplace(unstasher)
     }
