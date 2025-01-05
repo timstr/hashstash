@@ -1259,3 +1259,10 @@ fn test_graph_roundtrip() {
         Ok(())
     );
 }
+
+#[derive(Stashable)]
+struct StructWithDerivedStashing {
+    name: String,
+    count: usize,
+    items: Vec<StructA>,
+}

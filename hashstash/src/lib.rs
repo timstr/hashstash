@@ -21,6 +21,10 @@ pub use valuetypes::{PrimitiveType, ValueType};
 
 use unstasher::{InplaceUnstashPhase, UnstasherBackend};
 
+pub use hashstash_macros::*;
+
+extern crate self as hashstash;
+
 /// Trait for hashing and serializing an object
 pub trait Stashable<Context = ()> {
     /// Stash the object. The given Stasher may hash or serialize
