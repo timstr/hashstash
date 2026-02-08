@@ -78,6 +78,57 @@ pub trait UnstashableInplace<Context = ()> {
     ) -> Result<(), UnstashError>;
 }
 
+impl<C: Copy, T: Stashable<C>> Stashable<C> for Option<T> {
+    fn stash(&self, stasher: &mut Stasher<C>) {
+        match self {
+            None => stasher.u8(0),
+            Some(x) => {
+                stasher.u8(1);
+                stasher.object(x);
+            }
+        }
+    }
+}
+
+impl<C: Copy, T: 'static + Unstashable<C>> Unstashable<C> for Option<T> {
+    fn unstash(unstasher: &mut Unstasher<C>) -> Result<Self, UnstashError> {
+        match unstasher.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(unstasher.object()?)),
+            _ => Err(UnstashError::BadValue),
+        }
+    }
+}
+
+impl<C: Copy, T: 'static + Unstashable<C> + UnstashableInplace<C>> UnstashableInplace<C>
+    for Option<T>
+{
+    fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher<C>) -> Result<(), UnstashError> {
+        match unstasher.u8_always()? {
+            0 => match self {
+                Some(_) => {
+                    if unstasher.time_to_write() {
+                        *self = None;
+                    }
+                    Ok(())
+                }
+                None => Ok(()),
+            },
+            1 => match self {
+                Some(x) => unstasher.object_inplace(x),
+                None => {
+                    let x = unstasher.object_always()?;
+                    if unstasher.time_to_write() {
+                        *self = Some(x);
+                    }
+                    Ok(())
+                }
+            },
+            _ => Err(UnstashError::BadValue),
+        }
+    }
+}
+
 /// A small and fixed-size summary of the contents to an object,
 /// such that changes to an object result in a different ObjectHash.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
