@@ -19,6 +19,10 @@ pub enum UnstashError {
 
     /// An object was unstashed without reading all its stashed data
     NotFinished,
+
+    /// A value was read succesfully, but it has no valid interpretation
+    /// in context. This is intended mainly for client use.
+    BadValue,
 }
 
 /// Iterator over an array of primitives being unstashed
@@ -471,6 +475,16 @@ impl<'a, Context: Copy> Unstasher<'a, Context> {
         self.backend.read_primitive()
     }
 
+    /// Read a single usize value
+    pub fn usize(&mut self) -> Result<usize, UnstashError> {
+        self.backend.read_primitive::<u64>().map(|x| x as usize)
+    }
+
+    /// Read a single isize value
+    pub fn isize(&mut self) -> Result<isize, UnstashError> {
+        self.backend.read_primitive::<i64>().map(|x| x as isize)
+    }
+
     /// Read a single f32 value
     pub fn f32(&mut self) -> Result<f32, UnstashError> {
         self.backend.read_primitive()
@@ -598,14 +612,14 @@ impl<'a, Context: Copy> Unstasher<'a, Context> {
     /// Read an array of [Unstashable] objects into an iterator
     pub fn array_of_objects_iter<T: 'static + Unstashable<Context>>(
         &mut self,
-    ) -> Result<ObjectIterator<Context, T>, UnstashError> {
+    ) -> Result<ObjectIterator<'_, Context, T>, UnstashError> {
         self.array_of_objects_iter_with_context(self.context)
     }
 
     pub fn array_of_objects_iter_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
         &mut self,
         context: C1,
-    ) -> Result<ObjectIterator<C1, T>, UnstashError> {
+    ) -> Result<ObjectIterator<'_, C1, T>, UnstashError> {
         self.backend.read_array_of_object_iter(context)
     }
 
@@ -857,6 +871,26 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
         self.read_primitive_inplace(x)
     }
 
+    /// Read a single usize value. The reference is only written
+    /// to during the Write phase.
+    pub fn usize_inplace(&mut self, x: &mut usize) -> Result<(), UnstashError> {
+        let v = self.u64_always()?;
+        if self.phase == InplaceUnstashPhase::Write {
+            *x = v as _;
+        }
+        Ok(())
+    }
+
+    /// Read a single isize value. The reference is only written
+    /// to during the Write phase.
+    pub fn isize_inplace(&mut self, x: &mut isize) -> Result<(), UnstashError> {
+        let v = self.i64_always()?;
+        if self.phase == InplaceUnstashPhase::Write {
+            *x = v as _;
+        }
+        Ok(())
+    }
+
     /// Read a single f32 value. The reference is only written
     /// to during the Write phase.
     pub fn f32_inplace(&mut self, x: &mut f32) -> Result<(), UnstashError> {
@@ -930,6 +964,20 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
     /// when [Self::time_to_write] returns `true`
     pub fn i64_always(&mut self) -> Result<i64, UnstashError> {
         self.backend.read_primitive()
+    }
+
+    /// Read a single usize value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn usize_always(&mut self) -> Result<usize, UnstashError> {
+        self.backend.read_primitive::<u64>().map(|x| x as usize)
+    }
+
+    /// Read a single isize value directly.
+    /// Lasting modifications to data structures should only be made
+    /// when [Self::time_to_write] returns `true`
+    pub fn isize_always(&mut self) -> Result<isize, UnstashError> {
+        self.backend.read_primitive::<i64>().map(|x| x as isize)
     }
 
     /// Read a single f32 value directly.

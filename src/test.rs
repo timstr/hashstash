@@ -886,7 +886,7 @@ impl<T> WeirdContainer<T> {
         WeirdContainer { items }
     }
 
-    fn items<'a>(&'a self) -> impl 'a + Iterator<Item = &T> {
+    fn items<'a>(&'a self) -> impl Iterator<Item = &'a T> {
         self.items.iter().filter_map(|i| match i {
             Some(i) => Some(&**i),
             None => None,

@@ -259,6 +259,16 @@ impl<'a, Context: Copy> Stasher<'a, Context> {
         self.write_primitive::<i64>(x);
     }
 
+    /// Write a single usize value. Internally, this is always u64.
+    pub fn usize(&mut self, x: usize) {
+        self.write_primitive(x as u64);
+    }
+
+    /// Write a single isize value. Internally, this is always i64.
+    pub fn isize(&mut self, x: isize) {
+        self.write_primitive(x as i64);
+    }
+
     /// Write a single f32 value
     pub fn f32(&mut self, x: f32) {
         self.write_primitive::<f32>(x);
