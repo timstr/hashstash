@@ -6,6 +6,8 @@ use std::{
     rc::Rc,
 };
 
+extern crate self as hashstash;
+
 mod cache;
 mod stasher;
 mod unstasher;
@@ -18,6 +20,8 @@ pub use cache::{HashCache, HashCacheProperty};
 pub use stasher::{Order, Stasher};
 pub use unstasher::{InplaceUnstasher, UnstashError, Unstasher};
 pub use valuetypes::{PrimitiveType, ValueType};
+
+pub use hashstash_macros::{Stashable, Unstashable, UnstashableInplace};
 
 use unstasher::{InplaceUnstashPhase, UnstasherBackend};
 
@@ -104,7 +108,7 @@ impl<C: Copy, T: 'static + Unstashable<C> + UnstashableInplace<C>> UnstashableIn
     for Option<T>
 {
     fn unstash_inplace(&mut self, unstasher: &mut InplaceUnstasher<C>) -> Result<(), UnstashError> {
-        match unstasher.u8_always()? {
+        match unstasher.u8()? {
             0 => match self {
                 Some(_) => {
                     if unstasher.time_to_write() {
@@ -117,7 +121,7 @@ impl<C: Copy, T: 'static + Unstashable<C> + UnstashableInplace<C>> UnstashableIn
             1 => match self {
                 Some(x) => unstasher.object_inplace(x),
                 None => {
-                    let x = unstasher.object_always()?;
+                    let x = unstasher.object()?;
                     if unstasher.time_to_write() {
                         *self = Some(x);
                     }

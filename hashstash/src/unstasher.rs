@@ -874,7 +874,7 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
     /// Read a single usize value. The reference is only written
     /// to during the Write phase.
     pub fn usize_inplace(&mut self, x: &mut usize) -> Result<(), UnstashError> {
-        let v = self.u64_always()?;
+        let v = self.u64()?;
         if self.phase == InplaceUnstashPhase::Write {
             *x = v as _;
         }
@@ -884,7 +884,7 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
     /// Read a single isize value. The reference is only written
     /// to during the Write phase.
     pub fn isize_inplace(&mut self, x: &mut isize) -> Result<(), UnstashError> {
-        let v = self.i64_always()?;
+        let v = self.i64()?;
         if self.phase == InplaceUnstashPhase::Write {
             *x = v as _;
         }
@@ -906,91 +906,91 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
     /// Read a single bool value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn bool_always(&mut self) -> Result<bool, UnstashError> {
+    pub fn bool(&mut self) -> Result<bool, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single u8 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn u8_always(&mut self) -> Result<u8, UnstashError> {
+    pub fn u8(&mut self) -> Result<u8, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single i8 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn i8_always(&mut self) -> Result<i8, UnstashError> {
+    pub fn i8(&mut self) -> Result<i8, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single u16 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn u16_always(&mut self) -> Result<u16, UnstashError> {
+    pub fn u16(&mut self) -> Result<u16, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single i16 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn i16_always(&mut self) -> Result<i16, UnstashError> {
+    pub fn i16(&mut self) -> Result<i16, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single u32 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn u32_always(&mut self) -> Result<u32, UnstashError> {
+    pub fn u32(&mut self) -> Result<u32, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single i32 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn i32_always(&mut self) -> Result<i32, UnstashError> {
+    pub fn i32(&mut self) -> Result<i32, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single u64 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn u64_always(&mut self) -> Result<u64, UnstashError> {
+    pub fn u64(&mut self) -> Result<u64, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single i64 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn i64_always(&mut self) -> Result<i64, UnstashError> {
+    pub fn i64(&mut self) -> Result<i64, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single usize value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn usize_always(&mut self) -> Result<usize, UnstashError> {
+    pub fn usize(&mut self) -> Result<usize, UnstashError> {
         self.backend.read_primitive::<u64>().map(|x| x as usize)
     }
 
     /// Read a single isize value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn isize_always(&mut self) -> Result<isize, UnstashError> {
+    pub fn isize(&mut self) -> Result<isize, UnstashError> {
         self.backend.read_primitive::<i64>().map(|x| x as isize)
     }
 
     /// Read a single f32 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn f32_always(&mut self) -> Result<f32, UnstashError> {
+    pub fn f32(&mut self) -> Result<f32, UnstashError> {
         self.backend.read_primitive()
     }
 
     /// Read a single f64 value directly.
     /// Lasting modifications to data structures should only be made
     /// when [Self::time_to_write] returns `true`
-    pub fn f64_always(&mut self) -> Result<f64, UnstashError> {
+    pub fn f64(&mut self) -> Result<f64, UnstashError> {
         self.backend.read_primitive()
     }
 
@@ -1193,7 +1193,7 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
     /// Read a string and return it directly, during both the validation
     /// and write phases. Lasting changes should only be made when
     /// [Self::time_to_write] is true.
-    pub fn string_always(&mut self) -> Result<String, UnstashError> {
+    pub fn string(&mut self) -> Result<String, UnstashError> {
         self.backend.string()
     }
 
@@ -1222,11 +1222,11 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
     /// Read an object which is [Unstashable] and return it directly, during
     /// both the validation and write phases. Lasting changes should only be
     /// made when /// [Self::time_to_write] is true.
-    pub fn object_always<T: 'static + Unstashable<Context>>(&mut self) -> Result<T, UnstashError> {
-        self.object_always_with_context(self.context)
+    pub fn object<T: 'static + Unstashable<Context>>(&mut self) -> Result<T, UnstashError> {
+        self.object_with_context(self.context)
     }
 
-    pub fn object_always_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
+    pub fn object_with_context<C1: Copy, T: 'static + Unstashable<C1>>(
         &mut self,
         context: C1,
     ) -> Result<T, UnstashError> {
