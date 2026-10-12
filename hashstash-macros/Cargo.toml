@@ -2,6 +2,9 @@
 name = "hashstash-macros"
 version = "0.1.0"
 edition = "2021"
+description = "derive macros for the hashstash crate"
+repository = "https://github.com/timstr/hashstash"
+license = "MIT"
 
 [lib]
 proc-macro = true
