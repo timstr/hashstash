@@ -23,7 +23,7 @@ dependencies = [
 name = "hashstash"
 version = "0.6.0"
 dependencies = [
- "hashstash-macros",
+ "hashstash-macros 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand",
  "seahash",
 ]
@@ -31,6 +31,17 @@ dependencies = [
 [[package]]
 name = "hashstash-macros"
 version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.7",
+]
+
+[[package]]
+name = "hashstash-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cf2031b12d684b1c84dd4f8e656b892913eab80e3c016294cb3379e029eec41"
 dependencies = [
  "proc-macro2",
  "quote",
