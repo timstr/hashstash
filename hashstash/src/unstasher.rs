@@ -747,6 +747,23 @@ impl<'a, Context: Copy> Unstasher<'a, Context> {
     pub fn context(&self) -> Context {
         self.context
     }
+
+    pub fn with_inplace_unstasher<R, F>(&mut self, time_to_write: bool, f: F) -> R
+    where
+        F: FnOnce(&mut InplaceUnstasher<Context>) -> R,
+    {
+        let mut unstasher = InplaceUnstasher {
+            backend: self.backend,
+            context: self.context,
+            phase: match time_to_write {
+                true => InplaceUnstashPhase::Write,
+                false => InplaceUnstashPhase::Validate,
+            },
+        };
+        let r = f(&mut unstasher);
+        self.backend = unstasher.backend;
+        r
+    }
 }
 
 /// The two phases of in-place unstashing, used to separate validation
@@ -1324,5 +1341,18 @@ impl<'a, Context: Copy> InplaceUnstasher<'a, Context> {
 
     pub fn context(&self) -> Context {
         self.context
+    }
+
+    pub fn with_unstasher<R, F>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut Unstasher<Context>) -> R,
+    {
+        let mut unstasher = Unstasher {
+            backend: self.backend,
+            context: self.context,
+        };
+        let r = f(&mut unstasher);
+        self.backend = unstasher.backend;
+        r
     }
 }
