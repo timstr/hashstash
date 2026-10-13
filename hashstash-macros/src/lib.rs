@@ -3,19 +3,22 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Field, Member};
 
-#[proc_macro_derive(Stashable, attributes(stashable_context))]
+#[proc_macro_derive(Stashable, attributes(stashable_context, stash_ignore))]
 pub fn derive_stashable(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = syn::parse(input).unwrap();
     generate_impl_stashable(&ast).into()
 }
 
-#[proc_macro_derive(Unstashable, attributes(unstashable_context))]
+#[proc_macro_derive(Unstashable, attributes(unstashable_context, stash_ignore))]
 pub fn derive_unstashable(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = syn::parse(input).unwrap();
     generate_impl_unstashable(&ast).into()
 }
 
-#[proc_macro_derive(UnstashableInplace, attributes(unstashable_inplace_context))]
+#[proc_macro_derive(
+    UnstashableInplace,
+    attributes(unstashable_inplace_context, stash_ignore)
+)]
 pub fn derive_unstashable_inplace(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = syn::parse(input).unwrap();
     generate_impl_unstashable_inplace(&ast).into()
@@ -120,6 +123,7 @@ fn generate_field(
     ty: &syn::Type,
     access_prefix: &TokenStream,
     field: &syn::Member,
+    attrs: &[syn::Attribute],
     stash_trait: StashTrait,
     is_ref: bool,
 ) -> TokenStream {
@@ -133,6 +137,24 @@ fn generate_field(
     } else {
         quote! { #access_prefix }
     };
+
+    let ignore_attr_ident = format_ident!("stash_ignore");
+    let ignore = attrs.iter().any(|a| {
+        if a.path().get_ident() == Some(&ignore_attr_ident) {
+            return true;
+        }
+        false
+    });
+
+    if ignore {
+        return match stash_trait {
+            StashTrait::Stashable => quote! {},
+            StashTrait::Unstashable => quote! { #assignee Default::default(), },
+            StashTrait::UnstashableInplace => {
+                quote! { #access_prefix #field = Default::default(); }
+            }
+        };
+    }
 
     match &ty {
         syn::Type::Path(_) => {
@@ -290,6 +312,7 @@ fn generate_all_fields(
                 .as_ref()
                 .map(|n| syn::Member::Named(n.clone()))
                 .unwrap_or(syn::Member::Unnamed(i.into())),
+            &field.attrs,
             stash_trait,
             is_ref,
         );
